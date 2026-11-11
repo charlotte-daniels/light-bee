@@ -8,6 +8,8 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 |---|---|
 | App Store slug, display name | `light-bee`, Light Bee |
 | Template, app type | `python` (detected from the root `requirements.txt`; the root `Dockerfile` builds the image), Web App |
+| Category, visibility | Data Analytics, Private (owner, 11 November 2026); widen visibility only after the post-deploy pre-flight passes |
+| Descriptions | short: the first paragraph of the App Store listing below; full: all three paragraphs |
 | Version | the `pyproject.toml` version, `MAJOR.MINOR.0`; V1.0 is the first deployed release |
 | Container budget | 2Gi memory, 2 CPU (measured: about 350 MB for one dense 2-year object; the cache is held to 900 MB across sessions) |
 | Port | `PORT`, default 8080, bound to 0.0.0.0; never set `PORT` in the Environment Variables tab |
