@@ -21,8 +21,9 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 2. `.venv/bin/python tools/package_appstore.py` builds and verifies the upload archive.
 3. `bash tools/simulate_pipeline.sh` must end `SIMULATION: PASS` on that archive.
 4. Check Plotly's vendored version against current advisories and record the result in `docs/DEPENDENCIES.md`.
-5. The `deploy-gate` agent validates the release and every submission field. Nothing is uploaded without its PASS and Charlie's explicit confirmation.
-6. Upload with a fresh fileRef, leave the Environment Variables tab empty, submit, and watch every stage: setup, check, build, test, scan, package, containerize, container-scan, deploy.
+5. Build the image from the archive with `docker build --pull`, probe the health paths with `PORT` injected, and scan it with grype: no critical or high finding may remain (`docs/evidence/container-scan-1.0.0.md` records the first scan).
+6. The `deploy-gate` agent validates the release and every submission field. Nothing is uploaded without its PASS and Charlie's explicit confirmation.
+7. Upload with a fresh fileRef, leave the Environment Variables tab empty, submit, and watch every stage: setup, check, build, test, scan, package, containerize, container-scan, deploy.
 
 ## After the deploy (pre-flight)
 
@@ -45,7 +46,7 @@ Diagnose from the raw log before changing anything; never retry a real failure.
 | build, containerize | the archive is nested | rebuild with the packager, which keeps `Dockerfile` at the root |
 | test | a test or the coverage path | reproduce with `tools/simulate_pipeline.sh` |
 | quality gate | a Sonar violation, coverage, a hotspot | run `tools/gates.py`; fix the metric named |
-| container-scan | an OS or package CVE, a setuid bit | rebuild on the patched base; the image is flattened and has no pip |
+| container-scan | an OS or package CVE, a setuid bit | read the approval page, not just the job log; reproduce with grype; rebuild with `--pull` on the patched Alpine base; the image is flattened and has no pip, apk binary or SQLite |
 | deploy | port, bind or user | the runtime contract above; read the raw pod log |
 | green, but the browser gets 401 | the platform's single sign-on gateway in front of the app | if `/healthz` also 401s, it is the gateway: raise with the platform team |
 | runs fail with "did not accept your credentials" | the analyst's UDL login | the analyst checks their UDL account |

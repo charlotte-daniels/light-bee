@@ -1,6 +1,6 @@
 # Security policy
 
-Bluestaq Limited. UNCLASSIFIED. Light Bee V0.1 (build phase). The threat model and controls are in `docs/BRIEF.md` section 8; this file records the accepted risks and the limits of the local controls, so none of them is left implicit.
+Bluestaq Limited. UNCLASSIFIED. Light Bee V1.0. The threat model and controls are in `docs/BRIEF.md` section 8; this file records the accepted risks and the limits of the local controls, so none of them is left implicit.
 
 ## Accepted risks
 
@@ -8,7 +8,8 @@ Bluestaq Limited. UNCLASSIFIED. Light Bee V0.1 (build phase). The threat model a
 |---|---|---|
 | Sessions, and the credentials in them, are lost on a pod restart | Nothing is written to disk by design; the analyst signs in again | Sessions expire after 8 hours idle regardless |
 | Sessions are bound to a browser cookie, not the App Store identity | Whether the App Store passes the signed-in identity is TBC, re-verify | Random 256-bit, HttpOnly, Secure, SameSite=Strict cookie; session cap |
-| A base-image CVE with no upstream fix may appear at Container Scan | The base tag floats so each build takes the latest patches | Fail-closed OS upgrade; pip and apt binaries removed; flattened image; see `docs/evidence/predecessor-container-scan.md` |
+| A base-image CVE with no upstream fix may appear at Container Scan | The base tag floats so each build takes the latest patches | Alpine base (Debian had 59 won't-fix highs); fail-closed OS upgrade; SQLite, pip and the apk binary removed; flattened image; local grype scan before upload shows no critical or high (`docs/evidence/container-scan-1.0.0.md`) |
+| BusyBox applets that can reach the network (`wget`, `nc`) are in the Alpine image, which Debian slim did not carry | They are part of the single BusyBox binary the base needs, and an attacker with code execution already has Python | Non-root user, no setuid bits, no package manager, nothing writable outside `/tmp` and `/var/tmp` |
 
 ## Service controls (Phase 3)
 
@@ -51,4 +52,4 @@ Bluestaq Limited. UNCLASSIFIED. Light Bee V0.1 (build phase). The threat model a
 Known false positives, accepted (rename, or add the reviewed pragma): `tokens_per_minute = "strict-tier"` (prefer `TOKENS_PER_MINUTE_LIMIT`), `PASSWORD_INPUT = "udl-password"` (prefer `PASSWORD_FIELD`), `login = "analyst01"`, `BAD_CREDENTIALS = "..."` (prefer `BAD_CREDENTIALS_MESSAGE`).
 * **Dockerfile ENV and ARG keys are judged by name**: any key that reads as a credential fails the `dockerfile` gate whatever its value, because a value set there is baked into the image. Label-style keys (`SESSION_COOKIE`, `TOKEN_URL`) are not credentials there. A reviewed exception goes in `REVIEWED_ENV_KEYS` in `tools/gates.py` with a note; it is empty. The packager runs this gate and the secret scan before it writes an archive.
 * **The `read_only` gate is static.** It forbids writing verbs in the UDL package and HTTP clients anywhere else, but a verb assembled from parts would pass it. The binding control is the Phase 1 test that records every request a full run makes and fails on any verb other than GET, any body, any other host or any other path.
-* **The image is not built in the development environment** (no registry reachable). The platform's Container Build and Container Scan stages are the authority on the runtime image.
+* **The image is built and scanned locally from 1.0.0** (Docker under WSL, grype). The local scanner's database is not the platform's, so the platform's Container Build and Container Scan stages remain the authority on the runtime image.

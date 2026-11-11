@@ -371,6 +371,11 @@ PLANTS: Final = (
     ),
     Plant(
         "dockerfile",
+        "a sweep that misses setgid bits",
+        lambda r: _replace(r, "Dockerfile", "\\( -perm -4000 -o -perm -2000 \\)", "-perm -4000"),
+    ),
+    Plant(
+        "dockerfile",
         "a later ENV HOST back to loopback",
         lambda r: _replace(
             r, "Dockerfile", _FINAL_WORKDIR, "\nENV HOST=127.0.0.1" + _FINAL_WORKDIR

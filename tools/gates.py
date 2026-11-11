@@ -279,9 +279,14 @@ def _stages(instructions: list[str]) -> dict[str, list[str]]:
 
 
 _FINAL_ALLOWED: Final = ("ENV", "WORKDIR", "USER", "EXPOSE", "CMD", "LABEL")
-# The one acceptable sweep: files AND directories, chmod failures fail find
-# (`+`, not `\;`), and it is the last command of the last RUN before the flatten.
-SWEEP: Final = r"find / -xdev -perm /6000 \( -type f -o -type d \) -exec chmod a-s {} +"
+# The one acceptable sweep: setuid OR setgid, files AND directories, chmod
+# failures fail find (`+`, not `\;`), and it is the last command of the last RUN
+# before the flatten. The either-bit test is spelled as two `-perm -` clauses,
+# which every find accepts (POSIX find has no `-perm /mode`).
+SWEEP: Final = (
+    r"find / -xdev \( -perm -4000 -o -perm -2000 \) \( -type f -o -type d \)"
+    r" -exec chmod a-s {} +"
+)
 
 
 def _ends_with_sweep(instruction: str) -> bool:
