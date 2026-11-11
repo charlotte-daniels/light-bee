@@ -12,6 +12,8 @@ Every runtime dependency is a recorded decision. Pins are exact, live in `requir
 
 Vendored browser library (served by the app, not installed by pip): Plotly.js 2.35.3 (`plotly.js-dist-min`, MIT licence, copy in `src/lightbee/web/static/vendor/plotly-LICENSE.txt`), SHA-256 `fc84e3cfa55d23d3654c562ea5deb3c274eb6972a6adf66941d1a821e34825e4`, fetched with npm's integrity check (`sha512-sz2HLP8gkysLx/BanM2PtJTtZ1PLPwdHwMWNri2YxLBy3IOeuDsVQtlmWa4hoK3j/fi4naaD3uZJqH5ozM3zGg==`). It draws every chart and exports the PNGs in the browser, so the server carries no imaging stack. Excluded from SonarQube analysis as third-party code. Only SVG traces are used: its WebGL traces need `eval`, which the content security policy refuses.
 
+Advisory check for 1.0 (11 November 2026, GitHub advisory database, npm ecosystem): `plotly.js-dist-min` has no advisories. `plotly.js` has two, GHSA-wjc4-73q6-gv3m (critical, prototype pollution, below 2.25.2) and GHSA-2fqv-h3r5-m4vf (medium, cross-site scripting, below 1.16.0); 2.35.3 is outside both ranges. npm audit was not run: the check used the same database npm audit reads.
+
 Test-only (in `requirements.txt`, never in the image): pytest 9.2.0, pytest-cov 7.1.0. Local JavaScript tests use Node's built-in `node --test`; the browser smoke test uses the Playwright already on the build machine. Neither is a project dependency.
 
 Local quality tooling (`requirements-dev.txt`, never installed by the platform): ruff 0.16.9, mypy 2.4.1, pip-audit 2.10.0.
