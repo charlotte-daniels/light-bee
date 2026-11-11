@@ -7,7 +7,8 @@
 #
 # Also checks the closure installs and the tests pass on Python 3.11 (the
 # interpreter the dependency scanning stage may use), and that every hash-locked
-# image wheel resolves for cp312 manylinux, as the image build will need.
+# image wheel resolves for cp312 musllinux (the Alpine image), as the image
+# build will need.
 #
 #   bash tools/simulate_pipeline.sh            build the archive, then simulate
 set -euo pipefail
@@ -33,11 +34,11 @@ for py in python3.12 python3.11; do
     -r "$work/checkout/requirements.txt"
 done
 
-echo "== image closure: hash-locked wheels resolve for the image (cp312, manylinux)"
+echo "== image closure: hash-locked wheels resolve for the image (cp312, musllinux)"
 "$work/venv-python3.12/bin/python" -m pip download -q --disable-pip-version-check \
   --require-hashes --only-binary :all: --no-deps --dest "$work/wheels" \
   --python-version 3.12 --implementation cp --abi cp312 --abi abi3 --abi none \
-  --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64 --platform any \
+  --platform musllinux_1_1_x86_64 --platform musllinux_1_2_x86_64 --platform any \
   -r "$work/checkout/requirements-runtime.txt"
 
 echo "== test stage on python3.11 (compatibility only)"
