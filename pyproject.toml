@@ -1,0 +1,75 @@
+[project]
+name = "light-bee"
+version = "0.4.0"
+description = "Light Bee: is a satellite's photometric change seasonal, or does something else explain it"
+# The closure in requirements.txt is resolved and wheel-checked on 3.11 and 3.12.
+# The platform test stage runs 3.12; its dependency scanner may run 3.11.
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--cov=lightbee --cov=asgi --cov-report=xml --cov-report=term-missing --cov-fail-under=80 -p no:cacheprovider"
+# This project pins every dependency, so a deprecation is a decision to take.
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["lightbee", "asgi"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+# The rule set standing in for SonarQube's Code Quality gate.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["scratch"]
+
+[tool.ruff.lint]
+# Preview is on only so RUF029 can be named: it is ruff's stand-in for Sonar's
+# python:S7503 (async functions should use async features). With explicit
+# preview rules, no other preview rule is enabled by accident.
+preview = true
+explicit-preview-rules = true
+extend-select = ["RUF029"]
+select = [
+    "F", "E", "W", "I", "B", "UP", "RUF", "S", "SIM", "C4", "PIE", "RET",
+    "PERF", "A", "DTZ", "BLE", "PL", "C90", "N", "PT", "TRY", "ERA", "G", "LOG",
+]
+ignore = [
+    # PLR2004 flags every literal comparison; named constants are used where a
+    # value carries meaning, and the rest are self-describing (0, 1, 200).
+    "PLR2004",
+    # TRY003 bans messages in raise calls; short, specific messages are the
+    # whole point of fail-closed validation.
+    "TRY003",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 7
+max-branches = 12
+max-returns = 6
+max-statements = 50
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004", "S105", "S106", "PLC0415"]
+"tools/tests/*" = ["S101", "PLR2004", "S105", "S106", "PLC0415"]
+"tools/*" = ["T201", "S603", "S607"]
+# One case per line so each carries its pragma; see the module docstring.
+"tools/secret_cases.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+files = ["src", "tools"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["sgp4.*", "cognitive_complexity.*"]
+ignore_missing_imports = true

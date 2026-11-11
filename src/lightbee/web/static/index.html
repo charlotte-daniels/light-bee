@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Light Bee</title>
+<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" id="plotly.js-style-global" href="/static/plotly-rules.css">
+</head>
+<body>
+<header class="banner">
+  <p class="marking" id="marking-top">UNCLASSIFIED</p>
+  <div class="banner-row">
+    <h1>Light Bee</h1>
+    <p class="status">Under test and evaluation: not for operational decisions</p>
+    <button type="button" id="sign-out" class="secondary" hidden>Sign out</button>
+  </div>
+</header>
+
+<main id="main">
+  <section id="sign-in-panel" class="panel narrow" aria-labelledby="sign-in-title" hidden>
+    <h2 id="sign-in-title">Sign in to the UDL</h2>
+    <p>Your UDL username and password are held in this server's memory for this session only, and are never stored or logged.</p>
+    <form id="sign-in-form" novalidate>
+      <label for="username">UDL username</label>
+      <input id="username" name="username" autocomplete="username" required maxlength="128">
+      <label for="password">UDL password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+      <button type="submit">Sign in</button>
+      <p class="error" id="sign-in-error" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="app-panel" hidden>
+    <form id="run-form" class="panel controls" novalidate>
+      <div class="field">
+        <label for="sat-no">NORAD ID</label>
+        <input id="sat-no" name="sat-no" class="stamp" inputmode="numeric" pattern="[0-9]{1,5}" required maxlength="5" aria-describedby="run-error">
+      </div>
+      <div class="field">
+        <label for="change-date">Change date (UTC)</label>
+        <input id="change-date" name="change-date" type="date" required>
+      </div>
+      <div class="field">
+        <label for="window-days">Window (days)</label>
+        <input id="window-days" name="window-days" type="number" min="1" max="31" value="7" required>
+      </div>
+      <div class="field">
+        <label for="provider">Elset provider</label>
+        <select id="provider" name="provider">
+          <option value="KBR" selected>KBR</option>
+          <option value="NorthStar">NorthStar</option>
+          <option value="EXO">EXO</option>
+          <option value="18th SPCS">18th SPCS</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="threshold">Screening distance (km)</label>
+        <input id="threshold" name="threshold" type="number" min="1" max="2000" value="150" required>
+      </div>
+      <button type="submit" id="run-button" aria-describedby="run-error">Run</button>
+      <p class="error" id="run-error" role="alert"></p>
+    </form>
+
+    <p id="progress" class="progress" role="status" aria-live="polite"></p>
+
+    <fieldset class="toggle" id="basis-toggle">
+      <legend>Magnitude (both modes)</legend>
+      <input type="radio" id="basis-normalised" name="basis" value="normalised" checked>
+      <label for="basis-normalised">Range-normalised</label>
+      <input type="radio" id="basis-raw" name="basis" value="raw">
+      <label for="basis-raw">Absolute</label>
+    </fieldset>
+
+    <div class="tabs" role="tablist" aria-label="Modes">
+      <button type="button" role="tab" id="tab-seasonal" aria-controls="panel-seasonal" aria-selected="true">Seasonal Behaviour?</button>
+      <button type="button" role="tab" id="tab-causes" aria-controls="panel-causes" aria-selected="false" tabindex="-1">Other Causes</button>
+    </div>
+
+    <section id="panel-seasonal" role="tabpanel" aria-labelledby="tab-seasonal" class="mode">
+      <div id="flag" class="flag" hidden>
+        <p class="flag-headline" id="flag-headline"></p>
+        <p id="flag-detail"></p>
+        <details>
+          <summary>The working: each comparable SEPA bin</summary>
+          <table class="data">
+            <caption class="visually-hidden">Recent and reference medians per SEPA bin</caption>
+            <thead><tr><th scope="col">SEPA (°)</th><th scope="col">Recent</th><th scope="col">Same season before</th><th scope="col">Departure (sigma)</th></tr></thead>
+            <tbody id="flag-bins"></tbody>
+          </table>
+        </details>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="secondary" id="export-seasonal" disabled>Download PNG</button>
+      </div>
+      <div id="plot-seasonal" class="plot plot-seasonal" role="img" aria-label="Seasonal Behaviour? figure, not yet drawn"></div>
+    </section>
+
+    <section id="panel-causes" role="tabpanel" aria-labelledby="tab-causes" class="mode" hidden>
+      <div class="toolbar">
+        <button type="button" class="secondary" id="export-causes" disabled>Download PNG</button>
+      </div>
+      <p class="hint" id="scan-hint">Drag a box on the light curve or on VisMag v Time to list every GEO object within the screening distance at each selected time, or choose a time range here.</p>
+      <form id="scan-form" class="controls scan-form" novalidate aria-describedby="scan-hint">
+        <div class="field">
+          <label for="scan-from">Scan from (UTC)</label>
+          <input id="scan-from" type="datetime-local" step="60" required>
+        </div>
+        <div class="field">
+          <label for="scan-to">Scan to (UTC)</label>
+          <input id="scan-to" type="datetime-local" step="60" required>
+        </div>
+        <button type="submit" id="scan-button" disabled>Scan this range</button>
+        <p class="error" id="scan-error" role="alert"></p>
+      </form>
+      <p class="visually-hidden" id="causes-summary"></p>
+      <div id="plot-causes" class="plot plot-causes" role="img" aria-label="Other Causes figure, not yet drawn"></div>
+    </section>
+  </section>
+</main>
+
+<dialog id="scan-dialog" aria-labelledby="scan-title">
+  <h2 id="scan-title">Neighbourhood scan</h2>
+  <p id="scan-summary"></p>
+  <table class="data">
+    <caption class="visually-hidden">Objects within reach of the target during the selection</caption>
+    <thead><tr><th scope="col">NORAD ID</th><th scope="col">Nearest (km)</th><th scope="col">At (UTC)</th><th scope="col">Against the threshold</th><th scope="col">Elset age (h)</th></tr></thead>
+    <tbody id="scan-rows"></tbody>
+  </table>
+  <div id="scan-details"></div>
+  <div class="dialog-actions">
+    <button type="button" class="secondary" id="scan-csv">Download CSV</button>
+    <button type="button" id="scan-close">Close</button>
+  </div>
+</dialog>
+
+<footer>
+  <p class="marking" id="marking-bottom">UNCLASSIFIED</p>
+  <p>Bluestaq Limited</p>
+</footer>
+<script src="/static/plotly.min.js"></script>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

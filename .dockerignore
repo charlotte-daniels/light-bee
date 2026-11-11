@@ -1,0 +1,7 @@
+# The image is built from an allowlist: everything is excluded, then only what
+# the runtime needs is re-included. Tests, tools, docs and the baseline ship in
+# the upload archive (the platform runs the tests) but never in the image.
+*
+!requirements-runtime.txt
+!src/
+src/**/__pycache__

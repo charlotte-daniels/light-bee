@@ -1,0 +1,30 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+.netrc
+.pypirc
+.npmrc
+id_*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.crt
+# Python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+# Coverage and build output
+.coverage
+coverage.xml
+htmlcov/
+dist/
+# Local scratch
+scratch/
+# Live check output (counts and timings only, kept out of the repository)
+live-check-report*.json

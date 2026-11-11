@@ -1,0 +1,58 @@
+"""Cross-check: Light Bee's seasonal flag against the predecessor's, same inputs."""
+import importlib.util, sys
+from datetime import UTC, datetime
+import numpy as np, pandas as pd
+sys.path.insert(0, "/home/claude/light-bee/src")
+sys.path.insert(0, "/home/claude/light-bee")
+spec = importlib.util.spec_from_file_location("oldgrid", "/home/claude/ex/smg/spectrumonetgram/src/smg/grid.py")
+old = importlib.util.module_from_spec(spec); sys.modules["oldgrid"] = old; spec.loader.exec_module(old)
+from lightbee.analysis.seasonal import seasonal_flag, build_grid
+from lightbee.analysis.series import DAY_MS
+from tests.test_analysis_seasonal import synthetic, END, WEEK
+
+OLD_TO_NEW = {
+    "Consistent with seasonal variation": "consistent",
+    "Marginal, not clearly seasonal": "marginal",
+    "Offset, but within the object's seasonal scatter": "offset",
+    "Departs from the seasonal pattern": "departs",
+    "Inconclusive": "inconclusive", "Not enough data to compare": "inconclusive",
+    "Cannot be separated from the longitude change": "relocated",
+}
+rng = np.random.default_rng(42)
+agree = total = 0
+mismatches = []
+for case in range(60):
+    kwargs = {}
+    step = float(rng.choice([0, 0.1, 0.17, 0.3, -0.5, 1.0]))
+    if step: kwargs.update(step_after_ms=END - WEEK, step_mag=step)
+    if rng.random() < 0.2: kwargs.update(move_after_ms=END - int(rng.integers(10, 400)) * DAY_MS)
+    kwargs["per_night"] = int(rng.choice([2, 10, 60]))
+    s = synthetic(**kwargs)
+    if rng.random() < 0.4:
+        before = s.epoch_ms < END - WEEK
+        s.mag[before] += rng.normal(0, float(rng.choice([0.1, 0.3])), int(before.sum()))
+    new = seasonal_flag(s, recent_start_ms=END - WEEK, recent_end_ms=END)
+    frame = pd.DataFrame({
+        "ob_time": pd.to_datetime(s.epoch_ms, unit="ms"),
+        "sepa_deg": s.sepa, "mag": s.mag, "geo_lon_deg": s.geolon,
+    })
+    end = datetime.fromtimestamp(END / 1000, UTC).replace(tzinfo=None)
+    start = datetime.fromtimestamp((END - WEEK) / 1000, UTC).replace(tzinfo=None)
+    was = old.seasonal_comparison(frame, recent_start=start, recent_end=end)
+    total += 1
+    same = OLD_TO_NEW[was.verdict] == new.outcome
+    numbers = (was.comparable_bins == new.comparable_bins and
+               (np.isnan(was.median_delta_mag) and np.isnan(new.median_delta_mag) or abs(was.median_delta_mag - new.median_delta_mag) < 1e-9))
+    if same and numbers: agree += 1
+    else: mismatches.append((case, kwargs, was.verdict, new.outcome, was.comparable_bins, new.comparable_bins, was.median_delta_mag, new.median_delta_mag))
+print(f"verdict and numbers agree: {agree} of {total}")
+for m in mismatches[:10]: print(m)
+
+# Grid parity
+s = synthetic(days=60)
+frame = pd.DataFrame({"ob_time": pd.to_datetime(s.epoch_ms, unit="ms"), "sepa_deg": s.sepa, "mag": s.mag, "geo_lon_deg": s.geolon})
+end = datetime.fromtimestamp(END / 1000, UTC).replace(tzinfo=None)
+g_old = old.build_grid(frame, start=end - pd.Timedelta(days=60), end=end)
+g_new = build_grid(s, end_ms=END, days=60)
+print("grid equal:", np.allclose(g_old.values, g_new.values, equal_nan=True, atol=1e-5), "counts equal:", np.array_equal(g_old.counts, g_new.counts),
+      "longitude equal:", np.allclose(g_old.geo_longitude, g_new.geo_longitude, equal_nan=True))

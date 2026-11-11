@@ -1,0 +1,44 @@
+{
+  "name": "bluestaq-foundations",
+  "version": "1.0.0",
+  "description": "Portable, App Store ready engineering baseline for Bluestaq code projects. Covers both archetypes (single-file/static and server-backed container): a cold-start runbook, twenty per-domain skills, three fail-closed verification gates, an advisory design critic, the Bluestaq house voice, and two guardrail hooks. Drop into a project's .claude/ to inherit the standards. Use whenever bootstrapping a new repository, hardening an existing one, or preparing a Bluestaq App Store submission.",
+  "author": "Bluestaq Limited",
+  "skills": [
+    "skills/getting-started",
+    "skills/environment-setup",
+    "skills/glossary",
+    "skills/code-architecture",
+    "skills/dependencies",
+    "skills/configuration-and-secrets",
+    "skills/data-layer",
+    "skills/api-and-integration",
+    "skills/authentication-and-authorisation",
+    "skills/frontend-and-rendering",
+    "skills/state-management",
+    "skills/design-system",
+    "skills/testing-standards",
+    "skills/ci-cd",
+    "skills/packaging",
+    "skills/observability-and-audit",
+    "skills/security-hardening",
+    "skills/release-and-deploy",
+    "skills/app-store-deployment",
+    "skills/appstore-gate-compliance",
+    "skills/deploy-recipes",
+    "skills/toolchain-adapters",
+    "skills/app-store-readiness",
+    "skills/accessibility",
+    "skills/flight-plan",
+    "skills/working-with-claude"
+  ],
+  "agents": [
+    "agents/engineering-reviewer.md",
+    "agents/security-reviewer.md",
+    "agents/deploy-gate.md",
+    "agents/design-critic.md"
+  ],
+  "outputStyles": [
+    "output-styles/house-voice.md"
+  ],
+  "hooks": "hooks/hooks.json"
+}

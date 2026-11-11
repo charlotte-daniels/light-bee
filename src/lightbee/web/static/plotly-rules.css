@@ -1,0 +1,2 @@
+/* Plotly writes its global style rules into this same-origin sheet, so the
+   page needs no inline style allowance. Intentionally empty. */
