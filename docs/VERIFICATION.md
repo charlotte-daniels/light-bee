@@ -132,3 +132,17 @@ Build machine as Phase 5: Ubuntu 24.04 under WSL 2, building from a clone of the
 | engineering-reviewer and security-reviewer, 736ec11 | **PASS** | Plotly's purge deletes the plot's listener methods and the next draw rebinds them, confirmed in the vendored source; exactly one listener; no injection, CSP unchanged, same guarded scan POST. MINOR: confirm the drag on the deployed build, since the smoke test could not run |
 | deploy-gate, third 1.1.0 upload at c902432 | **PASS** | Probed afresh: archive `38f1c3f3b6c73fa17c1c00a2560ff9fc30219d616a4b0801ad63297c27e0d2cd` (`release-1.1.0-upload3`), 63 files byte-identical to git, only `app.js` changed since upload 2 and the image carries it; loop and simulation re-run PASS; health paths and `HEAD /` 200 on three `PORT` settings; JSON-only stdout, empty stderr; grype 0 critical, 0 high. MINORs: confirm drag selection live (smoke test could not run); the unused `/data` add-on; upload the gated archive only. Rollback: upload 2. Upload awaits the owner |
 | Third 1.1.0 upload deployed (owner, 12 November 2026) | **PASS** | Uploaded `38f1c3f3…` to the Light Bee record as 1.1.0; the owner confirmed drag selection opens the scan on the deployed build, closing the reviewers' and deploy-gate's MINOR |
+
+## 1.2.0, 12 November 2026
+
+| Check | Result | Evidence |
+|---|---|---|
+| Names live check (owner, WSL build clone) | **PASS** | `tools/live_check.py --names-only`: `/udl/onorbit/tuple` answered `satNo=43874,58204,63157` with `classificationMarking, satNo, commonName` in one request (TJS-3, TJS-10, TJS-15, each U); the plain `/udl/onorbit` also answered and is not used |
+| Local loop at 6cca1e8 | **PASS** | 11 of 11 gates, 192 of 192 proof cases, 415 tests, 25 tool tests, 8 JS tests; browser smoke skipped (no Playwright); hadolint through Docker clean |
+| Pipeline simulation | **PASS** | 415 tests on 3.12 and 3.11, coverage.xml line rate 99.6% |
+| Image and scan | **PASS** | Built with `--pull` from the archive: 43.6 MB, uid 10001, no pip, apk, setuid or `sqlite3`; health paths and `HEAD /` 200 on three `PORT` settings; `/readyz` 1.2.0; JSON-only stdout, empty stderr; grype 0 critical, 0 high (cached grype 0.121.3). Archive SHA-256 `f6d6e6818f0957e5f70e99e8d8c33641c0206b9a0a38aec72eb9f11f01acd473`, copy in `release-1.2.0` |
+| Dev server | **PASS** | Name column (left-aligned), details "NORAD 40001 (TEST NEIGHBOUR-1)", short legend entry with the full name on hover, two-line approach label |
+| engineering-reviewer | **PASS** after three rounds | Round 1 PASS with 4 MINOR (untimed names cost, no cancel check, whitespace cleaned, misplaced comment); round 2 PASS with 2 MINOR (an untested empty request, reads continuing after a failure); round 3 PASS at 6cca1e8, no findings |
+| security-reviewer | **PASS** after two rounds | Hostile names, comma list, hostile UDL answers and every sink attacked; round 1 2 MINOR (non-int numbers, whitespace folding), both fixed; round 2 PASS at f9d668f covering the new hover, label, legend and CSV sinks |
+| design-critic (advisory) | 2 HIGH, 3 MEDIUM, 2 LOW; 6 taken | Short legend entries, two-line staggered labels, Name column styling, "No name", exact CSV names, `objectLabel` guard. Not taken: "Name (UDL)" header |
+| Names stage timing on the real UDL | **Not yet measured** | Needed before the 3-minute claim is restated for 1.2; the owner's first live run records it |
