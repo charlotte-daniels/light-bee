@@ -11,10 +11,14 @@ browser, and credentials never do.
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
+import logging
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Final, Literal
@@ -60,6 +64,10 @@ EARLIEST_DATE: Final = date(2000, 1, 1)
 MAX_SELECTED_TIMES: Final = 50_000
 MAX_NEIGHBOURS_SHOWN: Final = 50
 SCAN_TIME_LIMIT_S: Final = 15.0
+# A scan waits this long at most for its neighbours' names; they are display only.
+SCAN_NAMES_WAIT_S: Final = 5.0
+_NAME_POOL: Final = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lightbee-scan-names")
+_LOG: Final = logging.getLogger("lightbee.api")
 # Cached photometry and analyses across all sessions; the oldest go first.
 MEMORY_BUDGET_BYTES: Final = 900 * 1024 * 1024
 PROVIDER_PATTERN: Final = r"^[A-Za-z0-9 _.\-]{1,64}$"
@@ -359,12 +367,8 @@ def neighbourhood(
             threshold_km=float(body.threshold_km),
             deadline=began + SCAN_TIME_LIMIT_S,
         )
-        # Names for the listed neighbours not already held: one small read, at most.
         listed = {n.sat_no for n in result.neighbours[:MAX_NEIGHBOURS_SHOWN]}
-        missing = listed - data.names.keys()
-        if missing:
-            with _services(request).make_client(session.credentials) as client:
-                add_names(data, run, client, missing)
+        _name_neighbours(request, session, run, listed - data.names.keys(), began)
     except ScreenError as error:
         raise ApiError(400, str(error)) from error
     finally:
@@ -379,6 +383,33 @@ def neighbourhood(
     )
     # The marking covers every record read so far, the names just read included.
     return {**_scan_body(result, data.names), "marking": markings(data)}
+
+
+def _name_neighbours(
+    request: Request, session: Session, run: Run, missing: set[int], began: float
+) -> None:
+    """Names for a scan's listed neighbours not already held: one small read.
+
+    The scan waits for it at most SCAN_NAMES_WAIT_S, and never past its own
+    time limit. A slow read finishes in the background (two at most at once)
+    and its names are there for the next scan; this one answers without them.
+    """
+    data = run.data
+    wait = min(SCAN_NAMES_WAIT_S, began + SCAN_TIME_LIMIT_S - time.monotonic())
+    if not missing or data is None or wait <= 0:
+        return
+    make_client = _services(request).make_client
+    credentials = session.credentials
+
+    def read() -> None:
+        with make_client(credentials) as client:
+            add_names(data, run, client, missing)
+
+    future = _NAME_POOL.submit(contextvars.copy_context().run, read)
+    try:
+        future.result(timeout=wait)
+    except FutureTimeoutError:
+        _LOG.info("neighbour names were not ready; the scan answers without them")
 
 
 def _check_credentials(make_client: ClientFactory, credentials: Credentials, now: datetime) -> None:

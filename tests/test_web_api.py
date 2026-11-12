@@ -910,3 +910,34 @@ def _inputs_with(names: dict[int, str]) -> Any:
     from lightbee.figures.causes import CausesInputs
 
     return CausesInputs(None, None, None, [], (0, 1), 150.0, names=names)  # type: ignore[arg-type]
+
+
+def test_a_slow_names_read_never_holds_up_a_scan(
+    finished: tuple[TestClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    import time
+
+    client, run_id = finished
+    release = threading.Event()
+    called = threading.Event()
+
+    def slow(*_: Any, **__: Any) -> None:
+        called.set()
+        release.wait(10)
+
+    monkeypatch.setattr(api_module, "add_names", slow)
+    monkeypatch.setattr(api_module, "SCAN_NAMES_WAIT_S", 0.2)
+    # Forget the run's names, so the scan has to ask for its neighbours'.
+    store = client.app.state.sessions  # type: ignore[attr-defined]
+    session = store.get(client.cookies.get(COOKIE_NAME))
+    session.run.data.names.clear()
+    start = int(NOW.timestamp() * 1000) - 2 * 86_400_000
+    began = time.monotonic()
+    response = client.post(f"/api/runs/{run_id}/scan", json={"times_ms": [start]}, headers=HEADERS)
+    took = time.monotonic() - began
+    release.set()
+    assert called.is_set()  # the names read was asked for
+    assert response.status_code == 200
+    assert took < 3  # but the scan answered without waiting for it
+    assert response.json()["neighbours"]

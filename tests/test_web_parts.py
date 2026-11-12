@@ -462,3 +462,9 @@ def test_long_names_keep_the_legend_narrow_and_labels_apart() -> None:
     assert [label["ay"] for label in labels] == [-24, -42, -60, -24]
     # Near the end of the window a label leans left, clear of the legend.
     assert causes._label_offset(990, 0, 1000)["xanchor"] == "right"
+
+
+def test_names_are_read_for_exactly_the_approaches_the_panel_draws() -> None:
+    from lightbee.figures import causes
+
+    assert runs.NAMED_APPROACHES == causes.MAX_APPROACH_TRACES

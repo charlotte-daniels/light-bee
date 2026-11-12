@@ -44,7 +44,6 @@ from lightbee.analysis.series import DAY_MS, Series
 from lightbee.udl.client import Credentials, UdlAuthError, UdlError, UdlReadClient
 from lightbee.udl.photometry import Photometry, merge
 from lightbee.udl.queries import (
-    NAME_BATCH,
     ElsetRead,
     read_elsets,
     read_geo_catalogue,
@@ -61,6 +60,8 @@ RECENT_DAYS: Final = 15
 # orbital panels open with a state and the screen has an elset near the start.
 ELSET_LEAD: Final = timedelta(days=3)
 APPROACH_TIME_LIMIT_S: Final = 30.0
+# Names are read for the approaches the Other Causes panel draws (its MAX_APPROACH_TRACES).
+NAMED_APPROACHES: Final = 20
 # A run for today's date reuses photometry read up to this long ago; the
 # figures state the data's end time, so the analyst sees how fresh it is.
 WARM_TOLERANCE_MS: Final = 30 * 60_000
@@ -339,7 +340,8 @@ def _name_approaches(run: Run, data: RunData, open_client: Callable[[], UdlReadC
     """
     with run.lock:
         found: list[Approach] = list(run.results.get("approaches", []))
-    wanted = {run.request.sat_no, *(a.sat_no for a in found[:NAME_BATCH])} - data.names.keys()
+    shown = found[:NAMED_APPROACHES]  # the ones the panel draws, so always one read
+    wanted = {run.request.sat_no, *(a.sat_no for a in shown)} - data.names.keys()
     if not wanted:
         return
     run.set(stage="names")
@@ -376,6 +378,12 @@ def _names(
         return {}, Tally()
 
 
+def _copied(tally: Tally) -> Tally:
+    fresh = Tally()
+    fresh.add(tally)
+    return fresh
+
+
 def _carry_over(cached: RunData) -> RunData:
     """The cached data, with the parts that depend on the window kept for reuse."""
     return RunData(
@@ -390,8 +398,9 @@ def _carry_over(cached: RunData) -> RunData:
         catalogue_tally=cached.catalogue_tally,
         catalogue_span=cached.catalogue_span,
         approaches=cached.approaches,
-        names=cached.names,
-        names_tally=cached.names_tally,
+        # Copies, so a later run adding names never changes the cached data.
+        names=dict(cached.names),
+        names_tally=_copied(cached.names_tally),
     )
 
 
