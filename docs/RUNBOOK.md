@@ -56,6 +56,7 @@ Diagnose from the raw log before changing anything; never retry a real failure.
 | green, but the browser gets 401 | the platform's single sign-on gateway in front of the app | if `/healthz` also 401s, it is the gateway: raise with the platform team |
 | runs fail with "did not accept your credentials" | the analyst's UDL login | the analyst checks their UDL account |
 | runs fail with "The UDL read failed" | UDL outage, rate limit or a changed field | the message names the stage; re-run `tools/live_check.py` |
+| a run fails with "Request failed (503)" and a refresh shows the sign-in screen | the container was restarted, most often killed at its memory limit during the full-history read; a new app record starts at 128Mi memory and 200m CPU | Configuration tab: set 2Gi memory and 2 CPU (the release table above), apply, run again; a 503 with no Light Bee message always comes from the platform, not the app |
 
 ## Operational limits
 
