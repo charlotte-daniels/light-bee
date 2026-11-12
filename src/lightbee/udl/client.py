@@ -45,10 +45,7 @@ ALLOWED_PATHS: Final = frozenset(
         "/udl/eoobservation/tuple",  # live store, selected columns
         "/udl/eoobservation/history",  # archive, selected columns via `columns`
         "/udl/elset/tuple",  # elset history, selected columns
-        # Satellite names for display (1.2). Both candidates are allowed until
-        # the live check shows which one answers; the other is then removed.
-        "/udl/onorbit/tuple",
-        "/udl/onorbit",
+        "/udl/onorbit/tuple",  # satellite names, selected columns (1.2)
     }
 )
 _ALLOWED_PARAMS: Final = frozenset(

@@ -93,7 +93,6 @@ def test_every_check_passes_against_a_healthy_service() -> None:
 
 def test_the_names_check_shows_each_endpoint_its_fields_markings_and_names() -> None:
     fake = _fake()
-    fake.refuse_param["/udl/onorbit"] = "satNo"  # one candidate refuses, as a real one may
     report = live_check.run(_factory(fake), live_check._arguments(["--names-only"]), NOW)
     assert list(report.checks) == ["login", "names"]
     assert report.failures == []
@@ -102,13 +101,7 @@ def test_the_names_check_shows_each_endpoint_its_fields_markings_and_names() -> 
     assert variants["tuple_one"]["fields"] == ["classificationMarking", "commonName", "satNo"]
     assert variants["tuple_one"]["markings"] == {"U": 1}
     assert variants["tuple_list"]["records"] == 3
-    assert variants["plain_one"]["ok"] is False
-    assert "satNo" in variants["plain_one"]["detail"]
-    assert {r.url.path for r in fake.requests} == {
-        "/udl/elset/tuple",
-        "/udl/onorbit/tuple",
-        "/udl/onorbit",
-    }
+    assert {r.url.path for r in fake.requests} == {"/udl/elset/tuple", "/udl/onorbit/tuple"}
     assert all(request.method == "GET" for request in fake.requests)
 
 

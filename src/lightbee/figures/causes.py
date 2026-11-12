@@ -10,8 +10,8 @@ first two panels can be sent for a neighbourhood scan.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Final
 
@@ -27,6 +27,7 @@ from lightbee.figures.common import (
     TEXT,
     Caption,
     axis,
+    escape,
     layout,
     panel_title,
     rounded,
@@ -97,6 +98,20 @@ class CausesInputs:
     window: tuple[int, int]
     threshold_km: float
     approaches_note: str = ""
+    # Common names by catalogue number (1.2); an object without one shows its number only.
+    names: Mapping[int, str] = field(default_factory=dict)
+
+
+def object_label(sat_no: int, names: Mapping[int, str]) -> str:
+    """`NORAD 43432 (NAME)`, or `NORAD 43432` when the name is not known."""
+    name = names.get(sat_no)
+    return f"NORAD {sat_no} ({name})" if name else f"NORAD {sat_no}"
+
+
+def _shown_label(approach: Approach, inputs: CausesInputs) -> str:
+    """The object's label for the figure, escaped: Plotly reads a small HTML subset
+    in trace names and annotations, and the name is the UDL's text."""
+    return escape(object_label(approach.sat_no, inputs.names))
 
 
 def day_colour(day: int, days: int = 7) -> str:
@@ -122,7 +137,7 @@ def causes_figure(
     traces += _sensor_traces(inputs.light, start, end)
     if inputs.orbit is not None:
         traces += _orbit_traces(inputs.orbit)
-    traces += _approach_traces(inputs.approaches, inputs.threshold_km, start, end)
+    traces += _approach_traces(inputs, start, end)
     basis = "range-normalised" if inputs.light.basis == "range-normalised" else "raw"
     subtitle = (
         f"Light curve and VisMag v Time ({basis} magnitude); elements from "
@@ -152,7 +167,7 @@ def causes_figure(
     )
     light_title = _light_curve_title(ghosts, inputs.history is not None, shown)
     figure_layout["annotations"] += _panel_titles(light_title) + _approach_labels(
-        inputs.approaches, inputs.threshold_km, (start, end)
+        inputs, (start, end)
     )
     figure_layout["shapes"] += [
         {
@@ -216,7 +231,8 @@ def summary(inputs: CausesInputs, caption: Caption, ghosts: str = "") -> str:
     if inputs.approaches:
         nearest = inputs.approaches[0]
         when = datetime.fromtimestamp(nearest.tca_ms / 1000, UTC).strftime("%Y-%m-%d %H:%MZ")
-        text += f"; nearest NORAD {nearest.sat_no} at {nearest.range_km:.0f} km on {when}"
+        nearest_label = object_label(nearest.sat_no, inputs.names)
+        text += f"; nearest {nearest_label} at {nearest.range_km:.0f} km on {when}"
     text += "."
     if inputs.orbit is not None and len(inputs.orbit):
         text += (
@@ -240,9 +256,8 @@ def _panel_titles(light_title: str) -> list[dict[str, Any]]:
     ]
 
 
-def _approach_labels(
-    found: Sequence[Approach], threshold_km: float, window: tuple[int, int]
-) -> list[dict[str, Any]]:
+def _approach_labels(inputs: CausesInputs, window: tuple[int, int]) -> list[dict[str, Any]]:
+    found, threshold_km = inputs.approaches, inputs.threshold_km
     start, end = window
     labels: list[dict[str, Any]] = [
         {
@@ -258,7 +273,7 @@ def _approach_labels(
     ]
     labels.extend(
         {
-            "text": f"NORAD {approach.sat_no}: {approach.range_km:.0f} km",
+            "text": f"{_shown_label(approach, inputs)}: {approach.range_km:.0f} km",
             "xref": "x6",
             "yref": "y6",
             "x": approach.tca_ms,
@@ -394,9 +409,8 @@ def _orbit_traces(orbit: OrbitSeries) -> list[dict[str, Any]]:
     ]
 
 
-def _approach_traces(
-    found: Sequence[Approach], threshold_km: float, start: int, end: int
-) -> list[dict[str, Any]]:
+def _approach_traces(inputs: CausesInputs, start: int, end: int) -> list[dict[str, Any]]:
+    found, threshold_km = inputs.approaches, inputs.threshold_km
     traces: list[dict[str, Any]] = [
         {
             "type": "scatter",
@@ -415,7 +429,7 @@ def _approach_traces(
         {
             "type": "scatter",
             "mode": "lines",
-            "name": f"NORAD {approach.sat_no}",
+            "name": _shown_label(approach, inputs),
             "x": [int(v) for v in approach.track_ms],
             "y": rounded(approach.track_km, 1),
             "xaxis": "x6",

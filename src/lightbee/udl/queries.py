@@ -26,6 +26,7 @@ from lightbee.udl.records import (
     Tally,
     controls_of,
     elset_or_problem,
+    satellite_name,
 )
 from lightbee.udl.windows import Fetch, Progress, read_window, time_filter
 
@@ -68,6 +69,13 @@ LIVE_OVERLAP: Final = timedelta(days=3)
 GEO_MEAN_MOTION: Final = (0.9, 1.1)
 CATALOGUE_SPAN: Final = timedelta(hours=12)
 DEFAULT_ELSET_SOURCE: Final = "KBR"
+# Satellite names (1.2): the on-orbit tuple endpoint answers a comma list of
+# catalogue numbers in one read (live check, 12 November 2026: TJS-3, TJS-10
+# and TJS-15 in one request, each marked U). A hundred numbers keep the query
+# string short; a GEO snapshot of about 900 objects is then 9 small reads.
+ONORBIT: Final = "/udl/onorbit/tuple"
+NAME_COLUMNS: Final = ("classificationMarking", "satNo", "commonName")
+NAME_BATCH: Final = 100
 
 
 def fetcher(client: UdlReadClient, path: str, time_field: str, params: dict[str, str]) -> Fetch:
@@ -205,6 +213,51 @@ def read_elsets(
     reader = _elset_reader(source, (start, end), sat_no)
     parts = read_window(fetch, start, end, reader, workers=client.throttle.limit)
     return _merge(parts)
+
+
+def read_names(client: UdlReadClient, sat_nos: Iterable[int]) -> tuple[dict[int, str], Tally]:
+    """Common names for these catalogue numbers, for display only.
+
+    Every record must carry an accepted UNCLASSIFIED marking, and its controls
+    join the product banner like any other read. A record for a number not
+    asked for, or a second record for one already named, is not used.
+    """
+    wanted = sorted({_checked_sat_no(n) for n in sat_nos})
+    names: dict[int, str] = {}
+    tally = Tally()
+    for start in range(0, len(wanted), NAME_BATCH):
+        batch = wanted[start : start + NAME_BATCH]
+        params = {
+            "satNo": ",".join(map(str, batch)),
+            "columns": ",".join(NAME_COLUMNS),
+            "maxResults": str(len(batch) * 2),
+        }
+        asked = set(batch)
+        for record in client.read(ONORBIT, params):
+            _take_name(record, asked, names, tally)
+    return names, tally
+
+
+def _take_name(
+    record: dict[str, Any], asked: set[int], names: dict[int, str], tally: Tally
+) -> None:
+    """Keep one on-orbit record's name if its marking, number and name all pass."""
+    tally.received += 1
+    controls = controls_of(record)
+    if controls is None:
+        tally.refuse(record.get("classificationMarking"))
+        return
+    named = satellite_name(record)
+    if named is None or named[0] not in asked:
+        tally.invalid += 1
+        tally.invalid_fields["commonName" if named is None else "satNo"] += 1
+        return
+    if named[0] in names:
+        tally.duplicates += 1
+        return
+    names[named[0]] = named[1]
+    tally.kept += 1
+    tally.controls |= controls
 
 
 def read_geo_catalogue(

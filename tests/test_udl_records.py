@@ -334,3 +334,32 @@ def test_the_udl_sepa_is_flipped_to_the_reference_orientation() -> None:
     item = observation(make_observation(43874, WHEN, 1, solarEqPhaseAngle=30.0), 43874)
     assert item is not None
     assert item.sepa == -30.0
+
+
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        ({"satNo": 43874, "commonName": "TJS-3"}, (43874, "TJS-3")),
+        ({"satNo": "43874", "commonName": "  INTELSAT   901 "}, (43874, "INTELSAT 901")),
+        ({"satNo": 25544, "commonName": "ISS (ZARYA)"}, (25544, "ISS (ZARYA)")),
+        (
+            {"satNo": 1, "commonName": "SL-3 R/B [DEB] #2, A&B: 'X'"},
+            (1, "SL-3 R/B [DEB] #2, A&B: 'X'"),
+        ),
+        ({"satNo": 43874, "commonName": ""}, None),
+        ({"satNo": 43874, "commonName": "<b>X</b>"}, None),
+        ({"satNo": 43874, "commonName": "TJS" + chr(0x2011) + "3"}, None),  # non-ASCII hyphen
+        ({"satNo": 43874, "commonName": "X" * 41}, None),
+        ({"satNo": 43874, "commonName": 7}, None),
+        ({"satNo": 43874}, None),
+        ({"satNo": True, "commonName": "TJS-3"}, None),
+        ({"satNo": "4387a", "commonName": "TJS-3"}, None),
+        ({"satNo": 0, "commonName": "TJS-3"}, None),
+    ],
+)
+def test_a_satellite_name_is_shown_exactly_or_not_at_all(
+    record: dict[str, Any], expected: tuple[int, str] | None
+) -> None:
+    from lightbee.udl.records import satellite_name
+
+    assert satellite_name(record) == expected

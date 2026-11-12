@@ -57,12 +57,12 @@ export function todayUtc(now = new Date()) {
 
 /** The scan as CSV: one row per neighbour per selected time. */
 export function scanCsv(scan, marking) {
-  const lines = [`# ${csvSafe(marking)}`, 'norad_id,time_utc,separation_km,within_threshold'];
+  const lines = [`# ${csvSafe(marking)}`, 'norad_id,name,time_utc,separation_km,within_threshold'];
   for (const neighbour of scan.neighbours || []) {
     scan.times_ms.forEach((time, index) => {
       const km = neighbour.separations_km[index];
       const within = km !== null && km <= scan.threshold_km ? 'yes' : 'no';
-      lines.push([neighbour.sat_no, utc(time), km === null ? '' : km, within].join(','));
+      lines.push([neighbour.sat_no, csvSafe(neighbour.name), utc(time), km === null ? '' : km, within].join(','));
     });
   }
   return lines.join('\n') + '\n';
@@ -145,4 +145,10 @@ export function causesQuery(basis, ghosts) {
 export function exportName(satNo, mode, changeDate) {
   const safeMode = String(mode).replace(/[^a-z-]/gi, '').toLowerCase();
   return `lightbee-${Number(satNo)}-${safeMode}-${String(changeDate).replace(/[^0-9-]/g, '')}`;
+}
+
+/** "NORAD 43432 (NAME)", or "NORAD 43432" when the UDL gave no name. */
+export function objectLabel(neighbour) {
+  const name = typeof neighbour?.name === 'string' ? neighbour.name : '';
+  return name ? `NORAD ${neighbour.sat_no} (${name})` : `NORAD ${neighbour?.sat_no}`;
 }

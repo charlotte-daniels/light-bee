@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Final, Literal
@@ -370,7 +370,7 @@ def neighbourhood(
         len(result.neighbours),
         time.monotonic() - began,
     )
-    return _scan_body(result)
+    return _scan_body(result, data.names)
 
 
 def _check_credentials(make_client: ClientFactory, credentials: Credentials, now: datetime) -> None:
@@ -433,6 +433,7 @@ def _causes_inputs(run: Run, basis: Basis) -> CausesInputs:
     orbit = (
         orbit_series(elsets, run.request.provider, start_ms=start, end_ms=end) if elsets else None
     )
+    data = run.data  # read once: a release may clear it at any moment
     return CausesInputs(
         light=light,
         history=found.series if found is not None else None,
@@ -441,6 +442,7 @@ def _causes_inputs(run: Run, basis: Basis) -> CausesInputs:
         window=(start, end),
         threshold_km=run.request.threshold_km,
         approaches_note=results.get("_approaches_note", ""),
+        names=data.names if data is not None else {},
     )
 
 
@@ -468,7 +470,7 @@ def _flag_body(flag: Any) -> dict[str, Any]:
     }
 
 
-def _scan_body(result: Any) -> dict[str, Any]:
+def _scan_body(result: Any, names: Mapping[int, str]) -> dict[str, Any]:
     return {
         "times_ms": [int(t) for t in result.times_ms],
         "thinned": result.thinned,
@@ -479,6 +481,7 @@ def _scan_body(result: Any) -> dict[str, Any]:
         "neighbours": [
             {
                 "sat_no": n.sat_no,
+                "name": names.get(n.sat_no, ""),
                 "min_km": round(n.min_km, 1),
                 "min_at_ms": n.min_at_ms,
                 "inside": n.inside,

@@ -304,3 +304,47 @@ def test_an_elset_epoch_outside_the_requested_window_is_refused() -> None:
     result = _validated_elsets(raw, "KBR", SAT, window)
     assert result.tally.kept == 1
     assert result.tally.invalid_fields == {"epoch": 2, "source": 1}
+
+
+def _named(sat_no: object, name: object, marking: object = "U") -> dict[str, object]:
+    return {"satNo": sat_no, "commonName": name, "classificationMarking": marking}
+
+
+def test_names_are_read_in_batches_validated_and_their_controls_carried() -> None:
+    from lightbee.udl.queries import NAME_BATCH, ONORBIT, read_names
+
+    wanted = list(range(40000, 40000 + NAME_BATCH + 5))
+    onorbit = [_named(n, f"GEO {n}") for n in wanted[:-3]]
+    onorbit[0] = _named(40000, "TJS-3", "U//PR-MRKT")
+    onorbit[1] = _named(40001, "SECRET SAT", "S")  # refused for its marking
+    onorbit[2] = _named(40002, "<script>")  # a name outside the allowed characters
+    onorbit.append(_named(40003, "SECOND RECORD"))  # a duplicate number
+    onorbit.append(_named("40004", "TEXT NUMBER"))  # a number written as text: kept once
+    fake = FakeUdl(onorbit=onorbit)
+    with _client(fake) as client:
+        names, tally = read_names(client, wanted)
+    assert names[40000] == "TJS-3"
+    assert 40001 not in names
+    assert 40002 not in names
+    assert names[40003] == "GEO 40003"
+    assert wanted[-1] not in names  # no record: no name, no error
+    assert tally.refused_classification == 1
+    assert tally.invalid_fields["commonName"] == 1
+    assert tally.duplicates == 2
+    assert tally.controls == {"PR-MRKT"}
+    # Two reads for 105 numbers, each a GET to the on-orbit tuple endpoint with a comma list.
+    assert [r.url.path for r in fake.requests] == [ONORBIT, ONORBIT]
+    assert all(r.method == "GET" for r in fake.requests)
+    first = dict(fake.requests[0].url.params)
+    assert first["columns"] == "classificationMarking,satNo,commonName"
+    assert first["satNo"].count(",") == NAME_BATCH - 1
+
+
+def test_a_name_for_a_number_not_asked_for_is_not_used() -> None:
+    from lightbee.udl.queries import _take_name
+
+    names: dict[int, str] = {}
+    tally = Tally()
+    _take_name(_named(40009, "STRAY"), {40001}, names, tally)
+    assert names == {}
+    assert tally.invalid_fields["satNo"] == 1

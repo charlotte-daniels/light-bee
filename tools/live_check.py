@@ -89,7 +89,6 @@ RANGE_COLUMNS: Final = ("range",)
 ELSETS: Final = "/udl/elset/tuple"
 HISTORY: Final = "/udl/eoobservation/history"
 ONORBIT_TUPLE: Final = "/udl/onorbit/tuple"
-ONORBIT: Final = "/udl/onorbit"
 
 # A client factory takes optional client settings (for example a larger body
 # cap for the speed comparison) and returns a fresh client.
@@ -422,14 +421,16 @@ def check_elset_queries(make_client: ClientFactory, report: Report, now: datetim
 
 
 def _name_variants(objects: list[int]) -> dict[str, tuple[str, dict[str, str]]]:
-    """Each way 1.2 might read satellite names, so the report shows which one answers."""
+    """The name read 1.2 makes, for one object and for a comma list.
+
+    The first live check (12 November 2026) also tried the plain `/udl/onorbit`
+    path; both answered, and 1.2 uses only the tuple endpoint.
+    """
     first = str(objects[0])
     columns = "classificationMarking,satNo,commonName"
     return {
         "tuple_one": (ONORBIT_TUPLE, {"satNo": first, "columns": columns}),
         "tuple_list": (ONORBIT_TUPLE, {"satNo": ",".join(map(str, objects)), "columns": columns}),
-        "plain_one": (ONORBIT, {"satNo": first}),
-        "plain_list": (ONORBIT, {"satNo": ",".join(map(str, objects))}),
     }
 
 

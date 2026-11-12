@@ -1,7 +1,7 @@
 // Light Bee page behaviour. Every value from the server is written with
 // textContent or as Plotly data, never as HTML.
 import {
-  causesQuery, checkRunInputs, exportName, latestTime, neighbourStatus, progressText, scanCsv, selectionTimes,
+  causesQuery, checkRunInputs, exportName, latestTime, neighbourStatus, objectLabel, progressText, scanCsv, selectionTimes,
   timesInRange, todayUtc, utc, utcInput, utcInputValue,
 } from './logic.mjs';
 
@@ -378,6 +378,7 @@ function showScan(result) {
   for (const neighbour of result.neighbours) {
     const row = document.createElement('tr');
     cell(row, String(neighbour.sat_no));
+    cell(row, neighbour.name || '');
     cell(row, neighbour.min_km.toFixed(1));
     cell(row, utc(neighbour.min_at_ms));
     cell(row, neighbourStatus(neighbour));
@@ -391,7 +392,7 @@ function showScan(result) {
 function separationDetails(result, neighbour) {
   const block = document.createElement('details');
   const summary = document.createElement('summary');
-  summary.textContent = `NORAD ${neighbour.sat_no}: separation at every selected time`;
+  summary.textContent = `${objectLabel(neighbour)}: separation at every selected time`;
   block.append(summary);
   block.addEventListener('toggle', () => {
     if (!block.open || block.dataset.filled) return;

@@ -43,7 +43,13 @@ from lightbee.analysis.seasonal import (
 from lightbee.analysis.series import DAY_MS, Series
 from lightbee.udl.client import Credentials, UdlAuthError, UdlError, UdlReadClient
 from lightbee.udl.photometry import Photometry, merge
-from lightbee.udl.queries import ElsetRead, read_elsets, read_geo_catalogue, read_observations
+from lightbee.udl.queries import (
+    ElsetRead,
+    read_elsets,
+    read_geo_catalogue,
+    read_names,
+    read_observations,
+)
 from lightbee.udl.records import Elset, Tally
 
 AUDIT: Final = logging.getLogger("lightbee.audit")
@@ -111,6 +117,9 @@ class RunData:
     approaches: dict[tuple[float, int, int], tuple[list[Approach], str]] = field(
         default_factory=dict
     )
+    # Common names for the target and the GEO snapshot (1.2), display only.
+    names: dict[int, str] = field(default_factory=dict)
+    names_tally: Tally = field(default_factory=Tally)
 
     @property
     def nbytes(self) -> int:
@@ -283,6 +292,7 @@ def _execute(
                     client, _utc((window_start + end) // 2), source=request.provider
                 )
                 data.catalogue_span = (window_start, end)
+                data.names, data.names_tally = _names(client, {request.sat_no, *data.catalogue})
     # An object with no photometry still publishes its (empty) panel.
     if data.photometry is not None:
         _publish(run, "recent", _series(data, data.photometry, "auto"))
@@ -290,6 +300,15 @@ def _execute(
     run.check()
     _publish_orbit(run, data)
     return data
+
+
+def _names(client: UdlReadClient, sat_nos: set[int]) -> tuple[dict[int, str], Tally]:
+    """Names for display; a refused or failed read leaves them blank, never fails the run."""
+    try:
+        return read_names(client, sat_nos)
+    except UdlError:
+        _LOG.warning("satellite names could not be read; the run continues without them")
+        return {}, Tally()
 
 
 def _carry_over(cached: RunData) -> RunData:
@@ -306,6 +325,8 @@ def _carry_over(cached: RunData) -> RunData:
         catalogue_tally=cached.catalogue_tally,
         catalogue_span=cached.catalogue_span,
         approaches=cached.approaches,
+        names=cached.names,
+        names_tally=cached.names_tally,
     )
 
 
@@ -571,6 +592,7 @@ def markings(data: RunData | None) -> str:
             data.photometry.tally if data.photometry is not None else None,
             data.elsets.tally if data.elsets is not None else None,
             data.catalogue_tally,
+            data.names_tally,
         ):
             if part is not None:
                 tally.controls |= part.controls

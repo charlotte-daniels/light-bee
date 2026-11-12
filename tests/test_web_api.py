@@ -421,7 +421,8 @@ def test_a_wider_window_rereads_elsets_and_the_snapshot_but_not_photometry(fake:
         state = test_client.get(f"/api/runs/{wide['id']}").json()
         assert state["warm"] is False
         paths = {request.url.path for request in fake.requests[before:]}
-        assert paths == {"/udl/elset/tuple"}
+        # The snapshot is read again, and with it the names of the objects in it.
+        assert paths == {"/udl/elset/tuple", "/udl/onorbit/tuple"}
 
 
 def test_signing_out_stops_a_run_and_leaves_nothing_cached(fake: FakeUdl) -> None:
@@ -800,3 +801,69 @@ def test_one_failed_span_stops_its_siblings_at_once(
     assert clock.monotonic() - began < 3  # not the sibling's 10 s
     assert state["stage"] == "failed"
     assert "one season failed" in state["message"]
+
+
+def test_neighbours_carry_their_names_in_the_scan_and_the_figure(
+    finished: tuple[TestClient, str],
+) -> None:
+    from tests.fake_world import NEIGHBOUR_NAME
+
+    client, run_id = finished
+    start = int(NOW.timestamp() * 1000) - 2 * 86_400_000
+    times = [start + k * 60_000 for k in range(30)]
+    body = client.post(f"/api/runs/{run_id}/scan", json={"times_ms": times}, headers=HEADERS).json()
+    first = body["neighbours"][0]
+    assert (first["sat_no"], first["name"]) == (NEIGHBOUR, NEIGHBOUR_NAME)
+    assert all(isinstance(n["name"], str) for n in body["neighbours"])
+    causes = client.get(f"/api/runs/{run_id}/figures/causes").json()
+    named = [t["name"] for t in causes["data"] if t.get("legendgroup") == "approaches"]
+    assert f"NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME})" in named
+    labels = " ".join(a["text"] for a in causes["layout"]["annotations"])
+    assert f"NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME}): " in labels
+    assert f"nearest NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME}) at" in causes["summary"]
+
+
+def test_a_failed_names_read_leaves_names_blank_and_the_run_whole(fake: FakeUdl) -> None:
+    fake.fail_once["/udl/onorbit/tuple"] = 403
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        run = test_client.post("/api/runs", json=RUN, headers=HEADERS).json()
+        state = test_client.get(f"/api/runs/{run['id']}").json()
+        assert state["stage"] == "done", state
+        causes = test_client.get(f"/api/runs/{run['id']}/figures/causes").json()
+        named = [t["name"] for t in causes["data"] if t.get("legendgroup") == "approaches"]
+        assert named
+        assert all(name == f"NORAD {name.split()[1]}" for name in named)
+        start = int(NOW.timestamp() * 1000) - 2 * 86_400_000
+        body = test_client.post(
+            f"/api/runs/{run['id']}/scan", json={"times_ms": [start]}, headers=HEADERS
+        ).json()
+        assert all(n["name"] == "" for n in body["neighbours"])
+
+
+def test_a_name_with_markup_never_reaches_the_figure_as_markup() -> None:
+    import numpy as np
+
+    from lightbee.analysis.screen import Approach
+    from lightbee.figures import causes
+
+    # satellite_name refuses such a name at the boundary; the figure escapes anyway.
+    approach = Approach(
+        sat_no=40001,
+        tca_ms=0,
+        range_km=100.0,
+        inside=True,
+        borderline=False,
+        track_ms=np.array([0, 60_000]),
+        track_km=np.array([100.0, 101.0]),
+    )
+    assert causes._shown_label(approach, _inputs_with({40001: "<b>X</b>"})) == (
+        "NORAD 40001 (&lt;b&gt;X&lt;/b&gt;)"
+    )
+    assert causes.object_label(40002, {}) == "NORAD 40002"
+
+
+def _inputs_with(names: dict[int, str]) -> Any:
+    from lightbee.figures.causes import CausesInputs
+
+    return CausesInputs(None, None, None, [], (0, 1), 150.0, names=names)  # type: ignore[arg-type]

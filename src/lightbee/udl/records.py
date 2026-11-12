@@ -29,6 +29,7 @@ UNCLASSIFIED_MARKINGS: Final = frozenset({"U", "UNCLASSIFIED"})
 # Accepted by the owner on 10 November 2026, from what the live check found on
 # the reference objects' photometry and KBR elsets. Any other control, or an
 # unusual marking form, is refused.
+_NAME: Final = re.compile(r"[A-Za-z0-9()\[\]\-./+&_#,':][A-Za-z0-9 ()\[\]\-./+&_#,':]{0,39}")
 ACCEPTED_CONTROLS: Final = frozenset({"PR-MRKT", "PR-EXO-OBS", "DS-NSFCTC-OBS", "PR-KBR-ELSETS"})
 _TIMESTAMP: Final = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z")
 _SENSOR: Final = re.compile(r"[A-Za-z0-9_.:\-]{1,64}")
@@ -143,6 +144,25 @@ def controls_of(record: dict[str, Any]) -> frozenset[str] | None:
 def is_unclassified(record: dict[str, Any]) -> bool:
     """Only an explicit UNCLASSIFIED marking with accepted controls passes."""
     return controls_of(record) is not None
+
+
+def satellite_name(record: dict[str, Any]) -> tuple[int, str] | None:
+    """A catalogue number and its common name, or None if either is unusable.
+
+    The name is display text only: plain ASCII from a small set of characters
+    (letters, digits, spaces and `( ) [ ] - . / + & _ # , ' :`), spaces
+    collapsed, at most 40 characters. Anything else is refused rather than
+    cleaned, so a name is shown exactly as the UDL holds it or not at all.
+    """
+    raw_number = record.get("satNo")
+    number = _numbered(raw_number) if isinstance(raw_number, str) else sat_no_of(raw_number)
+    name = record.get("commonName")
+    if number is None or not isinstance(name, str):
+        return None
+    text = " ".join(name.split())
+    if not _NAME.fullmatch(text):
+        return None
+    return number, text
 
 
 def parse_time(value: object) -> datetime | None:

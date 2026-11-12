@@ -98,10 +98,29 @@ def dense_recent(days: int = 30, per_day: int = 1500) -> list[dict[str, Any]]:
     return records
 
 
+NEIGHBOUR_NAME = "TEST NEIGHBOUR-1"
+
+
+def names() -> list[dict[str, Any]]:
+    """On-orbit names for the target, the 100 km neighbour and most of the snapshot.
+
+    The last snapshot object has no record, so an unnamed object is always in view.
+    """
+    records = [
+        {"satNo": TARGET, "commonName": "TEST TARGET", "classificationMarking": "U"},
+        {"satNo": NEIGHBOUR, "commonName": NEIGHBOUR_NAME, "classificationMarking": "U"},
+    ]
+    records += [
+        {"satNo": 41000 + k, "commonName": f"GEO TEST {k}", "classificationMarking": "U"}
+        for k in range(39)
+    ]
+    return records
+
+
 def world(*, dense: bool = False) -> FakeUdl:
     observations = history() + (dense_recent() if dense else [])
     observations.sort(key=lambda r: r["obTime"])
-    return FakeUdl(history=observations, live=[], elsets=elsets())
+    return FakeUdl(history=observations, live=[], elsets=elsets(), onorbit=names())
 
 
 def factory(fake: FakeUdl) -> Callable[[Credentials], UdlReadClient]:
