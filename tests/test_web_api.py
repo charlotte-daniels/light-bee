@@ -421,8 +421,9 @@ def test_a_wider_window_rereads_elsets_and_the_snapshot_but_not_photometry(fake:
         state = test_client.get(f"/api/runs/{wide['id']}").json()
         assert state["warm"] is False
         paths = {request.url.path for request in fake.requests[before:]}
-        # The snapshot is read again, and with it the names of the objects in it.
-        assert paths == {"/udl/elset/tuple", "/udl/onorbit/tuple"}
+        # The snapshot is read again; names are read only for approaches not yet named.
+        assert "/udl/elset/tuple" in paths
+        assert paths <= {"/udl/elset/tuple", "/udl/onorbit/tuple"}
 
 
 def test_signing_out_stops_a_run_and_leaves_nothing_cached(fake: FakeUdl) -> None:
@@ -845,7 +846,42 @@ def test_a_failed_names_read_leaves_names_blank_and_the_run_whole(fake: FakeUdl)
         body = test_client.post(
             f"/api/runs/{run['id']}/scan", json={"times_ms": [start]}, headers=HEADERS
         ).json()
-        assert all(n["name"] == "" for n in body["neighbours"])
+        # The scan asks again for its own list, and this time the UDL answers.
+        from tests.fake_world import NEIGHBOUR_NAME
+
+        assert body["neighbours"][0]["name"] == NEIGHBOUR_NAME
+        assert body["marking"].startswith("UNCLASSIFIED")
+
+
+def test_a_run_names_only_its_approaches_in_one_read_and_times_its_stages(
+    fake: FakeUdl, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    before = len(fake.requests)  # the fake is shared across this module
+
+    def name_reads() -> list[Any]:
+        return [r for r in fake.requests[before:] if r.url.path == "/udl/onorbit/tuple"]
+
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        run = test_client.post("/api/runs", json=RUN, headers=HEADERS).json()
+        assert test_client.get(f"/api/runs/{run['id']}").json()["stage"] == "done"
+        reads = name_reads()
+        assert len(reads) == 1
+        asked = {int(n) for n in dict(reads[0].url.params)["satNo"].split(",")}
+        assert asked == {TARGET, NEIGHBOUR}  # the target and its one close approach
+        # A warm run on the same session reads no names at all.
+        again = test_client.post("/api/runs", json=RUN, headers=HEADERS).json()
+        assert test_client.get(f"/api/runs/{again['id']}").json()["stage"] == "done"
+        assert len(name_reads()) == 1
+    cold = next(r.__dict__["attributes"] for r in caplog.records if r.name == "lightbee.audit")
+    stages = cold["lightbee.stage_seconds"]
+    assert {"recent", "seasons", "history", "elsets", "catalogue", "screening", "names"} <= set(
+        stages
+    )
+    assert all(isinstance(v, float) and v >= 0 for v in stages.values())
+    assert sum(stages.values()) <= cold["lightbee.seconds"] + 0.5
+    assert 0 <= cold["lightbee.flag_seconds"] <= cold["lightbee.seconds"]
 
 
 def test_a_name_with_markup_never_reaches_the_figure_as_markup() -> None:

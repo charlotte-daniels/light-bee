@@ -6,7 +6,9 @@ export const STAGES = Object.freeze({
   seasons: 'Reading the same season in earlier years for the flag',
   history: 'Flag ready; reading the rest of two years of history for the heatmap',
   elsets: 'Reading the target’s elsets',
-  catalogue: 'Reading the GEO snapshot and screening close approaches',
+  catalogue: 'Reading the GEO snapshot',
+  screening: 'Building the heatmap and screening close approaches',
+  names: 'Reading the names of the close approaches',
   done: 'Done',
   failed: 'Failed',
 });

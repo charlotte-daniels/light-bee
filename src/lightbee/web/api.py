@@ -46,6 +46,7 @@ from lightbee.web.runs import (
     Run,
     RunReleasedError,
     RunRequest,
+    add_names,
     analysis,
     audit_scan,
     execute,
@@ -358,6 +359,12 @@ def neighbourhood(
             threshold_km=float(body.threshold_km),
             deadline=began + SCAN_TIME_LIMIT_S,
         )
+        # Names for the listed neighbours not already held: one small read, at most.
+        listed = {n.sat_no for n in result.neighbours[:MAX_NEIGHBOURS_SHOWN]}
+        missing = listed - data.names.keys()
+        if missing:
+            with _services(request).make_client(session.credentials) as client:
+                add_names(data, run, client, missing)
     except ScreenError as error:
         raise ApiError(400, str(error)) from error
     finally:
@@ -370,7 +377,8 @@ def neighbourhood(
         len(result.neighbours),
         time.monotonic() - began,
     )
-    return _scan_body(result, data.names)
+    # The marking covers every record read so far, the names just read included.
+    return {**_scan_body(result, data.names), "marking": markings(data)}
 
 
 def _check_credentials(make_client: ClientFactory, credentials: Credentials, now: datetime) -> None:

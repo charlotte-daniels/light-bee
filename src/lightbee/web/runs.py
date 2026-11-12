@@ -44,6 +44,7 @@ from lightbee.analysis.series import DAY_MS, Series
 from lightbee.udl.client import Credentials, UdlAuthError, UdlError, UdlReadClient
 from lightbee.udl.photometry import Photometry, merge
 from lightbee.udl.queries import (
+    NAME_BATCH,
     ElsetRead,
     read_elsets,
     read_geo_catalogue,
@@ -66,7 +67,18 @@ WARM_TOLERANCE_MS: Final = 30 * 60_000
 # Rough bytes held per observation once a run has its series and grid built.
 BYTES_PER_OBSERVATION: Final = 120
 
-Stage = Literal["queued", "recent", "seasons", "history", "elsets", "catalogue", "done", "failed"]
+Stage = Literal[
+    "queued",
+    "recent",
+    "seasons",
+    "history",
+    "elsets",
+    "catalogue",
+    "screening",
+    "names",
+    "done",
+    "failed",
+]
 Basis = Literal["auto", "normalised", "raw"]
 ClientFactory = Callable[[Credentials], UdlReadClient]
 
@@ -171,6 +183,11 @@ class Run:
     cancel: threading.Event = field(default_factory=threading.Event, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     compute: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    # Seconds spent in each stage, and from the start to the flag, for the audit
+    # line: where a slow run's time went, read from the platform's log.
+    stage_seconds: dict[str, float] = field(default_factory=dict)
+    stage_started: float | None = None
+    flag_seconds: float | None = None
 
     @property
     def finished(self) -> bool:
@@ -178,10 +195,21 @@ class Run:
 
     def set(self, **changes: Any) -> None:
         with self.lock:
+            now = time.monotonic()
+            if "stage" in changes and changes["stage"] != self.stage:
+                began = self.started if self.stage_started is None else self.stage_started
+                spent = self.stage_seconds.get(self.stage, 0.0) + (now - began)
+                self.stage_seconds[self.stage] = round(spent, 1)
+                self.stage_started = now
             for name, value in changes.items():
                 setattr(self, name, value)
             if self.stage in ("done", "failed") and self.finished_at is None:
-                self.finished_at = time.monotonic()
+                self.finished_at = now
+
+    def flag_ready(self) -> None:
+        """Note the moment the flag was first published. Call with the lock held."""
+        if self.flag_seconds is None:
+            self.flag_seconds = round(time.monotonic() - self.started, 1)
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
@@ -292,16 +320,49 @@ def _execute(
                     client, _utc((window_start + end) // 2), source=request.provider
                 )
                 data.catalogue_span = (window_start, end)
-                data.names, data.names_tally = _names(
-                    client, {request.sat_no, *data.catalogue}, run.check
-                )
+    run.set(stage="screening")
     # An object with no photometry still publishes its (empty) panel.
     if data.photometry is not None:
         _publish(run, "recent", _series(data, data.photometry, "auto"))
     analysis(run, "auto")
     run.check()
     _publish_orbit(run, data)
+    _name_approaches(run, data, lambda: make_client(credentials))
     return data
+
+
+def _name_approaches(run: Run, data: RunData, open_client: Callable[[], UdlReadClient]) -> None:
+    """Names for the target and its close approaches only: one small read, after screening.
+
+    Names are display text, so only the objects on screen are named; a scan
+    names its own list. Names already held (a warm run) are not read again.
+    """
+    with run.lock:
+        found: list[Approach] = list(run.results.get("approaches", []))
+    wanted = {run.request.sat_no, *(a.sat_no for a in found[:NAME_BATCH])} - data.names.keys()
+    if not wanted:
+        return
+    run.set(stage="names")
+    with open_client() as client:
+        add_names(data, run, client, wanted, run.check)
+
+
+def add_names(
+    data: RunData,
+    run: Run,
+    client: UdlReadClient,
+    sat_nos: set[int],
+    check: Callable[[], None] = lambda: None,
+) -> None:
+    """Read and keep names for these numbers; a failed read leaves them blank.
+
+    `check` is the run's cancel check while the run is going; a scan, made
+    after the run has finished, passes none.
+    """
+    names, tally = _names(client, sat_nos, check)
+    with run.lock:
+        data.names.update(names)
+        data.names_tally.add(tally)
 
 
 def _names(
@@ -500,6 +561,7 @@ def analysis(run: Run, basis: Basis) -> Analysis | None:
             if basis == "auto":
                 run.results["seasonal"] = True
                 run.results["flag"] = True
+                run.flag_ready()
         return made
 
 
@@ -553,6 +615,7 @@ def flag_of(run: Run, basis: Basis) -> SeasonalFlag | None:
             run.results[key] = made
             if basis == "auto":
                 run.results["flag"] = True
+                run.flag_ready()
         return made
 
 
@@ -623,6 +686,10 @@ def _audit(run: Run, outcome: str) -> None:
                 "lightbee.elsets": data.elsets.tally.kept if data and data.elsets else 0,
                 "lightbee.catalogue": len(data.catalogue) if data else 0,
                 "lightbee.seconds": round(time.monotonic() - run.started, 1),
+                # Where the time went: seconds per stage, and from the start to the flag.
+                "lightbee.stage_seconds": dict(run.stage_seconds),
+                # Absent when the run ended before a flag was published.
+                **({} if run.flag_seconds is None else {"lightbee.flag_seconds": run.flag_seconds}),
             }
         },
     )

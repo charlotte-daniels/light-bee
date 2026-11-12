@@ -35,7 +35,7 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 
 1. The app shows Healthy; `GET /` and `/healthz` return 200; `/readyz` reports the deployed version.
 2. Charlie signs in with his UDL login and runs 43874 end to end: the flag appears within 3 minutes, Other Causes draws, a drag-select scan lists neighbours, both PNG exports carry the marking, banner and footer.
-3. The platform's logging check passes with no warnings, and the audit lines (`body` "run done" and "scan", `code.namespace` `lightbee.audit`) show the run and scan with the request ID and the analyst's email, and no UDL username or credentials.
+3. The platform's logging check passes with no warnings, and the audit lines (each run's line carries `lightbee.flag_seconds` and `lightbee.stage_seconds.<stage>`, the time to the flag and in each stage) (`body` "run done" and "scan", `code.namespace` `lightbee.audit`) show the run and scan with the request ID and the analyst's email, and no UDL username or credentials.
 4. Keep the uploaded archive as the rollback.
 
 ## Roll back

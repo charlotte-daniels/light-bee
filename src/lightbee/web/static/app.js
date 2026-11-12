@@ -349,6 +349,8 @@ async function scan(times) {
   try {
     const result = await api(runPath('/scan'), { method: 'POST', body: { times_ms: times, threshold_km: threshold } });
     state.scan = result;
+    // The scan may have read names too: the page and the CSV carry its marking.
+    if (typeof result.marking === 'string' && result.marking) setMarking(result.marking);
     showScan(result);
     $('progress').textContent = progressText(state.run);
   } catch (error) {
