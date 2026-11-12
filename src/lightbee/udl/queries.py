@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -248,9 +248,18 @@ def read_names(
     if not batches:
         return names, tally
     workers = min(NAME_WORKERS, len(batches), client.throttle.limit)
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lightbee-names") as pool:
-        # Each read runs in this run's context, so its log lines carry the request ID.
-        answers = list(pool.map(lambda b: contextvars.copy_context().run(read, b), batches))
+    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lightbee-names")
+    # Each read runs in this run's context, so its log lines carry the request ID.
+    futures = [pool.submit(contextvars.copy_context().run, read, batch) for batch in batches]
+    try:
+        for future in as_completed(futures):
+            future.result()  # the first failure surfaces here, at once
+    except BaseException:
+        # Reads not yet started are dropped, so a refusal is not repeated batch after batch.
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    pool.shutdown(wait=True)
+    answers = [future.result() for future in futures]
     # Taken in batch order, so the result never depends on which read finished first.
     for batch, records in zip(batches, answers, strict=True):
         asked = set(batch)

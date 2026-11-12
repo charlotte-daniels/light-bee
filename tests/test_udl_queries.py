@@ -371,3 +371,32 @@ def test_only_whole_catalogue_numbers_reach_the_names_query(bad: object) -> None
 
     with _client(FakeUdl()) as client, pytest.raises(ValueError, match="catalogue number"):
         read_names(client, [bad])  # type: ignore[list-item]
+
+
+def test_no_numbers_means_no_names_read() -> None:
+    from lightbee.udl.queries import read_names
+
+    fake = FakeUdl()
+    with _client(fake) as client:
+        names, tally = read_names(client, [])
+    assert (names, tally.received) == ({}, 0)
+    assert fake.requests == []
+
+
+def test_a_refused_names_read_stops_the_reads_still_waiting() -> None:
+    from lightbee.udl.client import Throttle, UdlAuthError
+    from lightbee.udl.queries import NAME_BATCH, read_names
+
+    fake = FakeUdl(onorbit=[_named(n, f"GEO {n}") for n in range(1, 2001)])
+    fake.fail_once["/udl/onorbit/tuple"] = 403
+    client = UdlReadClient(
+        Settings(),
+        Credentials("analyst", "not-real-pw"),
+        transport=fake.transport(),
+        sleep=lambda _: None,
+        throttle=Throttle(1),  # one read at a time, so the refusal comes first
+    )
+    with client, pytest.raises(UdlAuthError):
+        read_names(client, range(1, 2001))
+    # 20 batches were waiting; the refusal ended them, not after all 20 asked again.
+    assert len(fake.requests) < 2000 // NAME_BATCH
