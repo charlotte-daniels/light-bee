@@ -67,6 +67,9 @@ LIGHT_CURVE_TITLE: Final = "Light curve over SEPA"
 MAX_SENSORS: Final = len(SENSOR_COLOURS)
 MAX_APPROACH_TRACES: Final = 20
 LABELLED_APPROACHES: Final = 5
+LEGEND_NAME_CHARS: Final = 14
+# Labels for neighbours close in time are lifted in turn, so they do not sit on each other.
+LABEL_STAGGER_PX: Final = 18
 LABEL_LEAN_SHARE: Final = 0.15
 # Markers drawn as SVG cost the browser about 9 KB each, so each panel has a
 # budget, shared across its traces in proportion to their size: about 1,000
@@ -109,9 +112,26 @@ def object_label(sat_no: int, names: Mapping[int, str]) -> str:
 
 
 def _shown_label(approach: Approach, inputs: CausesInputs) -> str:
-    """The object's label for the figure, escaped: Plotly reads a small HTML subset
-    in trace names and annotations, and the name is the UDL's text."""
+    """The object's full label, escaped: Plotly reads a small HTML subset in trace
+    names, hover text and annotations, and the name is the UDL's text."""
     return escape(object_label(approach.sat_no, inputs.names))
+
+
+def _legend_label(approach: Approach, inputs: CausesInputs) -> str:
+    """A short legend entry: the one legend is shared by every panel, so a long
+    name would narrow them all. The full name is in the hover and the label."""
+    name = inputs.names.get(approach.sat_no, "")
+    if len(name) > LEGEND_NAME_CHARS:
+        name = name[: LEGEND_NAME_CHARS - 1].rstrip() + "…"
+    return escape(object_label(approach.sat_no, {approach.sat_no: name} if name else {}))
+
+
+def _approach_text(approach: Approach, inputs: CausesInputs) -> str:
+    """`NORAD n: 72 km`, with the name on its own line beneath, so labels stay narrow."""
+    text = f"NORAD {approach.sat_no}: {approach.range_km:.0f} km"
+    name = inputs.names.get(approach.sat_no)
+    # The line break is added after escaping, so only the name is the UDL's text.
+    return f"{text}<br>{escape(name)}" if name else text
 
 
 def day_colour(day: int, days: int = 7) -> str:
@@ -273,16 +293,16 @@ def _approach_labels(inputs: CausesInputs, window: tuple[int, int]) -> list[dict
     ]
     labels.extend(
         {
-            "text": f"{_shown_label(approach, inputs)}: {approach.range_km:.0f} km",
+            "text": _approach_text(approach, inputs),
             "xref": "x6",
             "yref": "y6",
             "x": approach.tca_ms,
             "y": approach.range_km,
-            **_label_offset(approach.tca_ms, start, end),
+            **_staggered(_label_offset(approach.tca_ms, start, end), index),
             "arrowcolor": MUTED,
             "font": {"size": 12, "color": TEXT},
         }
-        for approach in list(found)[:LABELLED_APPROACHES]
+        for index, approach in enumerate(list(found)[:LABELLED_APPROACHES])
     )
     return labels
 
@@ -429,7 +449,8 @@ def _approach_traces(inputs: CausesInputs, start: int, end: int) -> list[dict[st
         {
             "type": "scatter",
             "mode": "lines",
-            "name": _shown_label(approach, inputs),
+            "name": _legend_label(approach, inputs),
+            "meta": _shown_label(approach, inputs),
             "x": [int(v) for v in approach.track_ms],
             "y": rounded(approach.track_km, 1),
             "xaxis": "x6",
@@ -441,7 +462,7 @@ def _approach_traces(inputs: CausesInputs, start: int, end: int) -> list[dict[st
             },
             "legendgroup": "approaches",
             "legendgrouptitle": {"text": "Close approaches"},
-            "hovertemplate": TIME_HOVER + "<br>%{y:.1f} km" + NAMED,
+            "hovertemplate": TIME_HOVER + "<br>%{y:.1f} km<extra>%{meta}</extra>",
         }
         for index, approach in enumerate(list(found)[:MAX_APPROACH_TRACES])
     )
@@ -449,7 +470,15 @@ def _approach_traces(inputs: CausesInputs, start: int, end: int) -> list[dict[st
 
 
 def _label_offset(at_ms: int, start: int, end: int) -> dict[str, Any]:
-    """Labels near the start of the window lean right, clear of the axis."""
+    """Labels near the start of the window lean right, clear of the axis; labels
+    near the end lean left, clear of the legend."""
     if at_ms - start < LABEL_LEAN_SHARE * (end - start):
         return {"ax": 40, "ay": -20, "xanchor": "left"}
+    if end - at_ms < LABEL_LEAN_SHARE * (end - start):
+        return {"ax": -40, "ay": -20, "xanchor": "right"}
     return {"ax": 0, "ay": -24}
+
+
+def _staggered(offset: dict[str, Any], index: int) -> dict[str, Any]:
+    """Lift every second and third label, so neighbours close in time stay apart."""
+    return {**offset, "ay": offset["ay"] - LABEL_STAGGER_PX * (index % 3)}

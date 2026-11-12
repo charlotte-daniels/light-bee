@@ -816,10 +816,17 @@ def test_neighbours_carry_their_names_in_the_scan_and_the_figure(
     assert (first["sat_no"], first["name"]) == (NEIGHBOUR, NEIGHBOUR_NAME)
     assert all(isinstance(n["name"], str) for n in body["neighbours"])
     causes = client.get(f"/api/runs/{run_id}/figures/causes").json()
-    named = [t["name"] for t in causes["data"] if t.get("legendgroup") == "approaches"]
-    assert f"NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME})" in named
-    labels = " ".join(a["text"] for a in causes["layout"]["annotations"])
-    assert f"NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME}): " in labels
+    traces = [t for t in causes["data"] if t.get("legendgroup") == "approaches"]
+    neighbour = next(t for t in traces if t["name"].startswith(f"NORAD {NEIGHBOUR} "))
+    # The shared legend gets a short entry; the hover carries the full name.
+    assert neighbour["name"] == f"NORAD {NEIGHBOUR} (TEST NEIGHBOU…)"
+    assert neighbour["meta"] == f"NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME})"
+    assert neighbour["hovertemplate"].endswith("<extra>%{meta}</extra>")
+    labels = [a["text"] for a in causes["layout"]["annotations"]]
+    assert any(
+        t.startswith(f"NORAD {NEIGHBOUR}: ") and t.endswith(f" km<br>{NEIGHBOUR_NAME}")
+        for t in labels
+    )
     assert f"nearest NORAD {NEIGHBOUR} ({NEIGHBOUR_NAME}) at" in causes["summary"]
 
 

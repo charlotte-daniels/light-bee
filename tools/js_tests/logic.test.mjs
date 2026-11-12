@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  causesQuery, checkRunInputs, csvSafe, exportName, formatSeconds, latestTime, neighbourStatus, objectLabel, progressText,
+  causesQuery, checkRunInputs, csvField, csvSafe, exportName, formatSeconds, latestTime, neighbourStatus, objectLabel, progressText,
   scanCsv,
   selectionTimes, timesInRange, todayUtc, utc, utcInput, utcInputValue,
 } from '../../src/lightbee/web/static/logic.mjs';
@@ -73,13 +73,18 @@ test('the scan CSV carries the marking, cannot start a formula, and lists every 
   assert.deepEqual(csv.trim().split('\n'), [
     '# UNCLASSIFIED//PR-MRKT', 'norad_id,name,time_utc,separation_km,within_threshold',
     '40001,TJS-3,1970-01-01 00:00:00Z,100.5,yes', '40001,TJS-3,1970-01-01 00:01:00Z,,no',
-    // A name cannot start a formula or add a column; a missing one is an empty cell.
-    "40002,'=cmd x,1970-01-01 00:00:00Z,90,yes", '40002,\'=cmd x,1970-01-01 00:01:00Z,,no',
+    // A name is kept exactly but cannot start a formula; a comma is quoted, not lost.
+    '40002,"\'=cmd,x",1970-01-01 00:00:00Z,90,yes', '40002,"\'=cmd,x",1970-01-01 00:01:00Z,,no',
     '40003,,1970-01-01 00:00:00Z,80,yes', '40003,,1970-01-01 00:01:00Z,,no',
   ]);
   assert.equal(objectLabel({ sat_no: 40001, name: 'TJS-3' }), 'NORAD 40001 (TJS-3)');
   assert.equal(objectLabel({ sat_no: 40003 }), 'NORAD 40003');
   assert.equal(objectLabel({ sat_no: 40003, name: 7 }), 'NORAD 40003');
+  assert.equal(objectLabel({}), 'NORAD (unknown)');
+  assert.equal(csvField("SL-3 R/B, A&B: 'X'"), '"SL-3 R/B, A&B: \'X\'"');
+  assert.equal(csvField('a"b'), '"a""b"');
+  assert.equal(csvField('-2+3'), "'-2+3");
+  assert.equal(csvField(undefined), '');
   assert.equal(csvSafe('=HYPERLINK("x")'), '\'=HYPERLINK("x")');
   assert.equal(csvSafe('a,b\nc'), 'a b c');
   assert.equal(csvSafe(undefined), '');

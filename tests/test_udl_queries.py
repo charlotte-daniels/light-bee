@@ -348,3 +348,26 @@ def test_a_name_for_a_number_not_asked_for_is_not_used() -> None:
     _take_name(_named(40009, "STRAY"), {40001}, names, tally)
     assert names == {}
     assert tally.invalid_fields["satNo"] == 1
+
+
+def test_a_cancelled_run_stops_asking_for_names() -> None:
+    from lightbee.udl.queries import read_names
+
+    class CancelledError(Exception):
+        pass
+
+    def cancel() -> None:
+        raise CancelledError
+
+    fake = FakeUdl(onorbit=[_named(n, f"GEO {n}") for n in range(1, 301)])
+    with _client(fake) as client, pytest.raises(CancelledError):
+        read_names(client, range(1, 301), check=cancel)
+    assert fake.requests == []
+
+
+@pytest.mark.parametrize("bad", [5.5, "5", True, 0, 100_000])
+def test_only_whole_catalogue_numbers_reach_the_names_query(bad: object) -> None:
+    from lightbee.udl.queries import read_names
+
+    with _client(FakeUdl()) as client, pytest.raises(ValueError, match="catalogue number"):
+        read_names(client, [bad])  # type: ignore[list-item]

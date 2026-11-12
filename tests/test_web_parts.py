@@ -425,3 +425,40 @@ def test_every_heatmap_day_is_a_whole_number_of_pixels_tall() -> None:
         assert round(area * (heat[1] - heat[0]), 6) == rows * seasonal.ROW_PX
         assert recent[1] == 1.0
         assert recent[0] > heat[1]  # a gap between the panels
+
+
+def test_long_names_keep_the_legend_narrow_and_labels_apart() -> None:
+    from lightbee.analysis.screen import Approach
+    from lightbee.figures import causes
+
+    def approach(sat_no: int, at_ms: int) -> Approach:
+        return Approach(
+            sat_no, at_ms, 50.0, True, False, np.array([0, at_ms]), np.array([60.0, 50.0])
+        )
+
+    long_name = "A" * 40
+    found = [approach(40000 + k, 500 + k) for k in range(4)]
+    inputs = causes.CausesInputs(
+        None,  # type: ignore[arg-type]  # only the approach helpers are exercised
+        None,
+        None,
+        found,
+        (0, 1000),
+        150.0,
+        names={40000: long_name, 40001: "<i>X</i>", 40002: "SHORT"},
+    )
+    traces = causes._approach_traces(inputs, 0, 1000)[1:]
+    assert [len(t["name"]) <= len("NORAD 40000 ()") + causes.LEGEND_NAME_CHARS for t in traces]
+    assert traces[0]["name"] == "NORAD 40000 (" + "A" * 13 + "…)"
+    assert traces[0]["meta"] == f"NORAD 40000 ({long_name})"
+    assert traces[1]["name"] == "NORAD 40001 (&lt;i&gt;X&lt;/i&gt;)"
+    assert traces[2]["name"] == "NORAD 40002 (SHORT)"
+    assert traces[3]["name"] == "NORAD 40003"
+    labels = causes._approach_labels(inputs, (0, 1000))[1:]
+    assert labels[0]["text"] == "NORAD 40000: 50 km<br>" + long_name
+    assert labels[1]["text"] == "NORAD 40001: 50 km<br>&lt;i&gt;X&lt;/i&gt;"
+    assert labels[3]["text"] == "NORAD 40003: 50 km"
+    # Close in time, so lifted in turn and never stacked on one another.
+    assert [label["ay"] for label in labels] == [-24, -42, -60, -24]
+    # Near the end of the window a label leans left, clear of the legend.
+    assert causes._label_offset(990, 0, 1000)["xanchor"] == "right"

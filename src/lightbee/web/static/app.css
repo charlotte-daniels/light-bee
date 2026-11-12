@@ -113,3 +113,9 @@ dialog::backdrop { background: rgba(5, 10, 20, 0.7); }
 }
 
 [hidden] { display: none !important; }
+
+/* Satellite names (1.2): text, so left-aligned in the body font, and the one
+   column that wraps; numbers and times stay on one line. */
+#scan-rows td:nth-child(2), #scan-dialog th:nth-child(2) { text-align: left; font-family: inherit; max-width: 22ch; overflow-wrap: anywhere; }
+#scan-rows td:not(:nth-child(2)) { white-space: nowrap; }
+.unknown { color: var(--muted); }

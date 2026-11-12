@@ -363,3 +363,10 @@ def test_a_satellite_name_is_shown_exactly_or_not_at_all(
     from lightbee.udl.records import satellite_name
 
     assert satellite_name(record) == expected
+
+
+@pytest.mark.parametrize("bad", ["A\tB", "A\nB", "A\x1cB", "A\xa0B", "A" + chr(0x2028) + "B"])
+def test_a_name_with_any_whitespace_but_spaces_is_refused_not_cleaned(bad: str) -> None:
+    from lightbee.udl.records import satellite_name
+
+    assert satellite_name({"satNo": 1, "commonName": bad}) is None

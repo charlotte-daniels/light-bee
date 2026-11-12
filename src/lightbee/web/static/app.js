@@ -360,6 +360,7 @@ function cell(row, text) {
   const td = document.createElement('td');
   td.textContent = text;
   row.append(td);
+  return td;
 }
 
 function showScan(result) {
@@ -378,7 +379,9 @@ function showScan(result) {
   for (const neighbour of result.neighbours) {
     const row = document.createElement('tr');
     cell(row, String(neighbour.sat_no));
-    cell(row, neighbour.name || '');
+    // A muted marker, not a blank: the UDL gave no name, or one not fit to show.
+    if (!neighbour.name) cell(row, 'No name').classList.add('unknown');
+    else cell(row, neighbour.name);
     cell(row, neighbour.min_km.toFixed(1));
     cell(row, utc(neighbour.min_at_ms));
     cell(row, neighbourStatus(neighbour));

@@ -13,7 +13,9 @@ ingestion. The two overlap; exact duplicates are dropped and counted.
 
 from __future__ import annotations
 
+import contextvars
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final
@@ -76,6 +78,7 @@ DEFAULT_ELSET_SOURCE: Final = "KBR"
 ONORBIT: Final = "/udl/onorbit/tuple"
 NAME_COLUMNS: Final = ("classificationMarking", "satNo", "commonName")
 NAME_BATCH: Final = 100
+NAME_WORKERS: Final = 8
 
 
 def fetcher(client: UdlReadClient, path: str, time_field: str, params: dict[str, str]) -> Fetch:
@@ -95,7 +98,8 @@ def _utc(moment: datetime) -> datetime:
 
 
 def _checked_sat_no(sat_no: int) -> int:
-    if isinstance(sat_no, bool) or not 1 <= sat_no <= MAX_SAT_NO:
+    valid = isinstance(sat_no, int) and not isinstance(sat_no, bool)
+    if not valid or not 1 <= sat_no <= MAX_SAT_NO:
         raise ValueError(f"a NORAD catalogue number must be between 1 and {MAX_SAT_NO}")
     return sat_no
 
@@ -215,25 +219,42 @@ def read_elsets(
     return _merge(parts)
 
 
-def read_names(client: UdlReadClient, sat_nos: Iterable[int]) -> tuple[dict[int, str], Tally]:
+def read_names(
+    client: UdlReadClient, sat_nos: Iterable[int], check: Callable[[], None] = lambda: None
+) -> tuple[dict[int, str], Tally]:
     """Common names for these catalogue numbers, for display only.
 
-    Every record must carry an accepted UNCLASSIFIED marking, and its controls
-    join the product banner like any other read. A record for a number not
-    asked for, or a second record for one already named, is not used.
+    The batches are read in parallel, as the photometry spans are, so a GEO
+    snapshot's ten or so reads cost about one read's time. `check` runs
+    before each read, so a cancelled run stops asking. Every record must carry
+    an accepted UNCLASSIFIED marking, and its controls join the product banner
+    like any other read. A record for a number not asked for, or a second
+    record for one already named, is not used.
     """
     wanted = sorted({_checked_sat_no(n) for n in sat_nos})
-    names: dict[int, str] = {}
-    tally = Tally()
-    for start in range(0, len(wanted), NAME_BATCH):
-        batch = wanted[start : start + NAME_BATCH]
+    batches = [wanted[i : i + NAME_BATCH] for i in range(0, len(wanted), NAME_BATCH)]
+
+    def read(batch: list[int]) -> list[dict[str, Any]]:
+        check()
         params = {
             "satNo": ",".join(map(str, batch)),
             "columns": ",".join(NAME_COLUMNS),
             "maxResults": str(len(batch) * 2),
         }
+        return client.read(ONORBIT, params)
+
+    names: dict[int, str] = {}
+    tally = Tally()
+    if not batches:
+        return names, tally
+    workers = min(NAME_WORKERS, len(batches), client.throttle.limit)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="lightbee-names") as pool:
+        # Each read runs in this run's context, so its log lines carry the request ID.
+        answers = list(pool.map(lambda b: contextvars.copy_context().run(read, b), batches))
+    # Taken in batch order, so the result never depends on which read finished first.
+    for batch, records in zip(batches, answers, strict=True):
         asked = set(batch)
-        for record in client.read(ONORBIT, params):
+        for record in records:
             _take_name(record, asked, names, tally)
     return names, tally
 

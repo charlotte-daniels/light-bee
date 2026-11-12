@@ -62,7 +62,7 @@ export function scanCsv(scan, marking) {
     scan.times_ms.forEach((time, index) => {
       const km = neighbour.separations_km[index];
       const within = km !== null && km <= scan.threshold_km ? 'yes' : 'no';
-      lines.push([neighbour.sat_no, csvSafe(neighbour.name), utc(time), km === null ? '' : km, within].join(','));
+      lines.push([neighbour.sat_no, csvField(neighbour.name), utc(time), km === null ? '' : km, within].join(','));
     });
   }
   return lines.join('\n') + '\n';
@@ -72,6 +72,13 @@ export function scanCsv(scan, marking) {
 export function csvSafe(text) {
   const value = String(text ?? '').replace(/[\r\n,]/g, ' ');
   return /^[=+\-@\t]/.test(value) ? `'${value}` : value;
+}
+
+/** A text cell kept exactly (RFC 4180 quoting), except that it cannot start a formula. */
+export function csvField(text) {
+  const raw = String(text ?? '');
+  const value = /^[=+\-@\t]/.test(raw) ? `'${raw}` : raw;
+  return /[",\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
 }
 
 /** How a neighbour is described in the list. */
@@ -149,6 +156,7 @@ export function exportName(satNo, mode, changeDate) {
 
 /** "NORAD 43432 (NAME)", or "NORAD 43432" when the UDL gave no name. */
 export function objectLabel(neighbour) {
+  const number = Number.isInteger(neighbour?.sat_no) && neighbour.sat_no > 0 ? neighbour.sat_no : '(unknown)';
   const name = typeof neighbour?.name === 'string' ? neighbour.name : '';
-  return name ? `NORAD ${neighbour.sat_no} (${name})` : `NORAD ${neighbour?.sat_no}`;
+  return name ? `NORAD ${number} (${name})` : `NORAD ${number}`;
 }

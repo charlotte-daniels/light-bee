@@ -292,7 +292,9 @@ def _execute(
                     client, _utc((window_start + end) // 2), source=request.provider
                 )
                 data.catalogue_span = (window_start, end)
-                data.names, data.names_tally = _names(client, {request.sat_no, *data.catalogue})
+                data.names, data.names_tally = _names(
+                    client, {request.sat_no, *data.catalogue}, run.check
+                )
     # An object with no photometry still publishes its (empty) panel.
     if data.photometry is not None:
         _publish(run, "recent", _series(data, data.photometry, "auto"))
@@ -302,10 +304,12 @@ def _execute(
     return data
 
 
-def _names(client: UdlReadClient, sat_nos: set[int]) -> tuple[dict[int, str], Tally]:
+def _names(
+    client: UdlReadClient, sat_nos: set[int], check: Callable[[], None]
+) -> tuple[dict[int, str], Tally]:
     """Names for display; a refused or failed read leaves them blank, never fails the run."""
     try:
-        return read_names(client, sat_nos)
+        return read_names(client, sat_nos, check)
     except UdlError:
         _LOG.warning("satellite names could not be read; the run continues without them")
         return {}, Tally()
