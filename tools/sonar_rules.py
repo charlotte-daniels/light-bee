@@ -13,6 +13,7 @@ Python (src/**/*.py)
          `dataclasses.replace` or `copy.copy`, whose type SonarQube cannot infer
   S7632  a `noqa` comment with anything after its rule codes
   S1244  `==` or `!=` against a float literal
+  S7504  a loop or comprehension over `list(x)` (1.1.0 upload, 12 November 2026)
 Dockerfile
   S7020  a line over 120 characters (the flagged line was 129; its split
          halves, 95 and under, passed)
@@ -230,10 +231,44 @@ def float_equality(path: Path, tree: ast.AST) -> list[str]:
     return problems
 
 
+def _wraps_in_list(node: ast.expr) -> bool:
+    """`list(x)` with one plain argument (not a starred or keyword one)."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "list"
+        and len(node.args) == 1
+        and not node.keywords
+        and not isinstance(node.args[0], ast.Starred)
+    )
+
+
+def needless_list(path: Path, tree: ast.AST) -> list[str]:
+    """python:S7504: iterating over `list(x)` when x is already iterable.
+
+    SonarQube flagged `for handler in list(logger.handlers)` (1.1.0 upload),
+    even though the copy was there to allow removal inside the loop. Slicing
+    or indexing the copy (`list(x)[:5]`) is not iteration over it and passed.
+    """
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        iterables: list[ast.expr] = []
+        if isinstance(node, ast.For | ast.AsyncFor):
+            iterables.append(node.iter)
+        if isinstance(node, ast.comprehension):
+            iterables.append(node.iter)
+        problems.extend(
+            f"{path}:{iterable.lineno} S7504 needless list() around an iterable"
+            for iterable in iterables
+            if _wraps_in_list(iterable)
+        )
+    return problems
+
+
 def python_problems(path: Path, text: str) -> list[str]:
     tree = ast.parse(text)
     problems = duplicated_literals(path, tree) + uninferred_returns(path, tree)
-    problems += float_equality(path, tree)
+    problems += float_equality(path, tree) + needless_list(path, tree)
     for number, line in enumerate(text.splitlines(), start=1):
         if _NOQA_WITH_TEXT.search(line):
             problems.append(f"{path}:{number} S7632 noqa comment carries text after its codes")

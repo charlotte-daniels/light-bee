@@ -110,6 +110,13 @@ _PYTHON_VARIANTS: Final = {
     "S5886 through a module alias": (
         "import dataclasses as dc\n\n\ndef f(s: object) -> object:\n    return dc.replace(s)\n"
     ),
+    "S7504 a loop over list(handlers), as flagged in 1.1.0": (
+        "import logging\n\n\ndef drop(logger: logging.Logger) -> None:\n"
+        "    for handler in list(logger.handlers):\n        logger.removeHandler(handler)\n"
+    ),
+    "S7504 a comprehension over list(x)": (
+        "def names(xs: dict[str, int]) -> list[str]:\n    return [x for x in list(xs)]\n"
+    ),
     "S7632 an upper-case NOQA": (
         "def f() -> None:\n    try:\n        pass\n"
         "    except Exception:  # NOQA: BLE001 because\n        pass\n"
@@ -609,6 +616,8 @@ LEGITIMATE_SONAR: Final = {
         "def c() -> None: ...\n\n\n"
         "def kinds() -> list[str]:\n"
         '    return ["scatter", "scatter", "scatter"]\n\n\n'
+        "def first(xs: set[int]) -> list[int]:\n"
+        "    return list(xs)[:5]\n\n\n"
         "def escape(text: str) -> str:\n"
         '    return text.replace("<", "&lt;")\n\n\n'
         "def zero(x: float) -> bool:\n"

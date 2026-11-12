@@ -182,6 +182,17 @@ def _writes_to_a_standard_stream(handler: logging.Handler) -> bool:
     return stream in (sys.stderr, sys.stdout, sys.__stderr__, sys.__stdout__)
 
 
+def _drop_printers(logger: logging.Logger) -> None:
+    """Remove the logger's handlers that print to a standard stream.
+
+    The handlers to drop are chosen first, so the list is never changed while
+    it is being read.
+    """
+    printers = [handler for handler in logger.handlers if _writes_to_a_standard_stream(handler)]
+    for handler in printers:
+        logger.removeHandler(handler)
+
+
 def configure_logging() -> None:
     """Route every logger to one JSON stdout handler. Safe to call twice.
 
@@ -190,18 +201,14 @@ def configure_logging() -> None:
     nothing is printed twice. Warnings and uncaught exceptions are logged.
     """
     root = logging.getLogger()
-    for handler in list(root.handlers):
-        if _writes_to_a_standard_stream(handler):
-            root.removeHandler(handler)
+    _drop_printers(root)
     if not any(isinstance(handler, StdoutHandler) for handler in root.handlers):
         root.addHandler(StdoutHandler())
     if root.level == logging.NOTSET or root.level > logging.INFO:
         root.setLevel(logging.INFO)
     for name in ("uvicorn", "uvicorn.error", ACCESS_LOGGER, "lightbee"):
         named = logging.getLogger(name)
-        for handler in list(named.handlers):
-            if _writes_to_a_standard_stream(handler):
-                named.removeHandler(handler)
+        _drop_printers(named)
         named.propagate = name != ACCESS_LOGGER
     logging.getLogger("lightbee").setLevel(logging.INFO)
     # uvicorn's access lines and the HTTP client's request lines carry full
