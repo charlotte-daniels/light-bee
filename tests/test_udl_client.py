@@ -81,9 +81,12 @@ def test_paths_off_the_allowlist_are_refused_before_any_request() -> None:
 
 
 def test_every_allowlisted_path_is_a_read_endpoint() -> None:
+    # The plain on-orbit path is the UDL's query endpoint for that collection,
+    # read with GET like the others; it is named exactly, not by pattern.
+    plain_queries = {"/udl/onorbit"}
     for path in ALLOWED_PATHS:
         assert path.startswith("/udl/")
-        assert path.rsplit("/", 1)[-1] in {"tuple", "history"}
+        assert path in plain_queries or path.rsplit("/", 1)[-1] in {"tuple", "history"}
 
 
 @pytest.mark.parametrize("status", [301, 302, 307, 308])
