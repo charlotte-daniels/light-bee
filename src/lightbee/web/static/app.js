@@ -85,10 +85,14 @@ async function signIn(event) {
   }
 }
 
+function purgePlots() {
+  for (const id of ['plot-seasonal', 'plot-causes']) Plotly.purge($(id));
+}
+
 async function signOut() {
   stopPolling();
   try { await api('/api/session', { method: 'DELETE' }); } catch { /* signed out either way */ }
-  for (const id of ['plot-seasonal', 'plot-causes']) Plotly.purge($(id));
+  purgePlots();
   state.run = null;
   $('flag').hidden = true;
   $('progress').textContent = '';
@@ -145,7 +149,7 @@ async function startRun(event) {
     stopPolling();
     state.drawn = new Set();
     state.request = body;
-    for (const id of ['plot-seasonal', 'plot-causes']) Plotly.purge($(id));
+    purgePlots();
     for (const id of ['export-seasonal', 'export-causes', 'scan-button']) $(id).disabled = true;
     $('flag').hidden = true;
     state.run = await api('/api/runs', { method: 'POST', body });
@@ -275,10 +279,11 @@ async function drawCauses() {
   const plot = $('plot-causes');
   await draw('plot-causes', figure);
   $('causes-summary').textContent = figure.summary || '';
-  if (!plot.dataset.listening) {
-    plot.on('plotly_selected', (event) => scan(selectionTimes(event)));
-    plot.dataset.listening = 'yes';
-  }
+  // Re-attached after every draw, never remembered by a flag: Plotly drops a
+  // plot's listeners whenever it purges it (a new run, sign-out, or a redraw
+  // it turns into a full replot), and 1.0 to 1.1 then ignored drag selections.
+  plot.removeListener('plotly_selected', selected);
+  plot.on('plotly_selected', selected);
   $('export-causes').disabled = false;
 }
 
@@ -320,6 +325,17 @@ async function scanRange(event) {
   const times = timesInRange($('plot-causes').data, from, to + 59999);
   if (!times.length) {
     scanError('scan-from', 'There are no observations in that range; widen it.');
+    return;
+  }
+  await scan(times);
+}
+
+// A drag selection: scanned, or a stated reason why not, never silence.
+async function selected(event) {
+  if (!Array.isArray(event?.points)) return;
+  const times = selectionTimes(event);
+  if (!times.length) {
+    $('progress').textContent = 'No observations in that selection; drag over the points to scan.';
     return;
   }
   await scan(times);

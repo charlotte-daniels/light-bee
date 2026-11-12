@@ -135,6 +135,23 @@ await page.uncheck('#ghost-years');
 await page.waitForFunction(() => !document.querySelector('#plot-causes').textContent.includes('ago beneath'));
 check(await ghostLegend() === 0, 'switching ghost years off removes them');
 
+// A second run on the same page: its drag selections must still be scanned.
+// 1.0 and the first 1.1 builds lost the listener here (Plotly.purge drops it).
+await page.getByRole('button', { name: 'Run' }).click();
+await page.waitForFunction(() => document.getElementById('progress').textContent.startsWith('Done'), null, { timeout: 120000 });
+await page.getByRole('tab', { name: 'Other Causes' }).click();
+await page.waitForSelector('#plot-causes .main-svg');
+const again = page.locator('#plot-causes .nsewdrag[data-subplot="xy"]');
+await again.scrollIntoViewIfNeeded();
+const lightBox = await again.boundingBox();
+await page.mouse.move(lightBox.x + 5, lightBox.y + 5);
+await page.mouse.down();
+await page.mouse.move(lightBox.x + lightBox.width - 5, lightBox.y + lightBox.height - 5, { steps: 12 });
+await page.mouse.up();
+await page.waitForSelector('#scan-dialog[open]', { timeout: 30000 }).then(() => check(true, 'a drag on the light curve after a second run opens the scan'))
+  .catch(() => check(false, 'a drag on the light curve after a second run opens the scan'));
+await page.keyboard.press('Escape');
+
 const cdp = await context.newCDPSession(page);
 await cdp.send('Performance.enable');
 const memory = await cdp.send('Performance.getMetrics');
