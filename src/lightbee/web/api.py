@@ -15,6 +15,7 @@ import contextvars
 import hashlib
 import logging
 import secrets
+import threading
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,7 @@ from lightbee.web.runs import (
     RELEASED_MESSAGE,
     ClientFactory,
     Run,
+    RunCancelledError,
     RunReleasedError,
     RunRequest,
     add_names,
@@ -68,6 +70,9 @@ SCAN_TIME_LIMIT_S: Final = 15.0
 SCAN_NAMES_WAIT_S: Final = 5.0
 _NAME_POOL: Final = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lightbee-scan-names")
 _LOG: Final = logging.getLogger("lightbee.api")
+# Runs with a scan's names read in flight; at most one each.
+_NAMING: Final[set[str]] = set()
+_NAMING_LOCK: Final = threading.Lock()
 # Cached photometry and analyses across all sessions; the oldest go first.
 MEMORY_BUDGET_BYTES: Final = 900 * 1024 * 1024
 PROVIDER_PATTERN: Final = r"^[A-Za-z0-9 _.\-]{1,64}$"
@@ -331,10 +336,10 @@ def causes(
 ) -> dict[str, Any]:
     run = _run_of(run_id, session)
     _result(run, "recent")
+    names, marking = _names_and_marking(run)
+    caption = _caption(run, _services(request).clock(), marking)
     # Ghost years come from the history already in memory; nothing is re-read.
-    return causes_figure(
-        _causes_inputs(run, basis), _caption(run, _services(request).clock()), ghosts=ghosts
-    )
+    return causes_figure(_causes_inputs(run, basis, names), caption, ghosts=ghosts)
 
 
 @router.post("/runs/{run_id}/scan")
@@ -382,7 +387,8 @@ def neighbourhood(
         time.monotonic() - began,
     )
     # The marking covers every record read so far, the names just read included.
-    return {**_scan_body(result, data.names), "marking": markings(data)}
+    names, marking = _names_and_marking(run)
+    return {**_scan_body(result, names), "marking": marking}
 
 
 def _name_neighbours(
@@ -398,18 +404,31 @@ def _name_neighbours(
     wait = min(SCAN_NAMES_WAIT_S, began + SCAN_TIME_LIMIT_S - time.monotonic())
     if not missing or data is None or wait <= 0:
         return
+    with _NAMING_LOCK:
+        if run.id in _NAMING:  # one names read per run at a time; the queue cannot grow
+            return
+        _NAMING.add(run.id)
     make_client = _services(request).make_client
     credentials = session.credentials
 
     def read() -> None:
-        with make_client(credentials) as client:
-            add_names(data, run, client, missing)
+        try:
+            # Sign-out or expiry cancels the run: a read not yet started never
+            # starts, and one under way stops before its next request.
+            if not run.cancel.is_set():
+                with make_client(credentials) as client:
+                    add_names(data, run, client, missing, run.check)
+        finally:
+            with _NAMING_LOCK:
+                _NAMING.discard(run.id)
 
     future = _NAME_POOL.submit(contextvars.copy_context().run, read)
     try:
         future.result(timeout=wait)
     except FutureTimeoutError:
         _LOG.info("neighbour names were not ready; the scan answers without them")
+    except RunCancelledError:
+        _LOG.info("the session ended while neighbour names were being read")
 
 
 def _check_credentials(make_client: ClientFactory, credentials: Credentials, now: datetime) -> None:
@@ -449,12 +468,12 @@ def _result(run: Run, name: str, waiting: str = "Still reading.") -> Any:
     return value
 
 
-def _caption(run: Run, now: datetime) -> Caption:
+def _caption(run: Run, now: datetime, marking: str | None = None) -> Caption:
     start, end = run.window_ms()
     first = datetime.fromtimestamp(start / 1000, UTC)
     last = datetime.fromtimestamp((end - 1) / 1000, UTC)
     return Caption(
-        marking=markings(run.data),
+        marking=markings(run.data) if marking is None else marking,
         sat_no=run.request.sat_no,
         window=f"{first:%Y-%m-%d} to {last:%Y-%m-%d} ({run.request.window_days} days)",
         source=f"UDL EO observations; {run.request.provider} elsets",
@@ -462,7 +481,18 @@ def _caption(run: Run, now: datetime) -> Caption:
     )
 
 
-def _causes_inputs(run: Run, basis: Basis) -> CausesInputs:
+def _names_and_marking(run: Run) -> tuple[dict[int, str], str]:
+    """A copy of the run's names and the marking that covers them, taken together.
+
+    A names read finishing in the background merges under the run's lock, so
+    a name is never shown under a banner that lacks its record's controls.
+    """
+    with run.lock:
+        data = run.data
+        return (dict(data.names) if data is not None else {}), markings(data)
+
+
+def _causes_inputs(run: Run, basis: Basis, names: Mapping[int, str]) -> CausesInputs:
     with run.lock:
         results = dict(run.results)
     found = analysis(run, "auto" if basis == "normalised" else "raw")
@@ -472,7 +502,6 @@ def _causes_inputs(run: Run, basis: Basis) -> CausesInputs:
     orbit = (
         orbit_series(elsets, run.request.provider, start_ms=start, end_ms=end) if elsets else None
     )
-    data = run.data  # read once: a release may clear it at any moment
     return CausesInputs(
         light=light,
         history=found.series if found is not None else None,
@@ -481,7 +510,7 @@ def _causes_inputs(run: Run, basis: Basis) -> CausesInputs:
         window=(start, end),
         threshold_km=run.request.threshold_km,
         approaches_note=results.get("_approaches_note", ""),
-        names=data.names if data is not None else {},
+        names=names,
     )
 
 

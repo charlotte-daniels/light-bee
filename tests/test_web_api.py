@@ -941,3 +941,36 @@ def test_a_slow_names_read_never_holds_up_a_scan(
     assert response.status_code == 200
     assert took < 3  # but the scan answered without waiting for it
     assert response.json()["neighbours"]
+
+
+def test_a_names_read_never_starts_for_an_ended_session_or_twice_for_one_run() -> None:
+    # Its own fake UDL: the module's is shared, and another test's late read would count.
+    fake = world()
+    client = make_client(fake)
+    signed_in(client)
+    run_id = client.post("/api/runs", json=RUN, headers=HEADERS).json()["id"]
+    store = client.app.state.sessions  # type: ignore[attr-defined]
+    session = store.get(client.cookies.get(COOKIE_NAME))
+    run = session.run
+    start = int(NOW.timestamp() * 1000) - 2 * 86_400_000
+
+    def name_reads_during_a_scan() -> int:
+        run.data.names.clear()
+        before = len(fake.requests)
+        response = client.post(
+            f"/api/runs/{run_id}/scan", json={"times_ms": [start]}, headers=HEADERS
+        )
+        assert response.status_code == 200
+        return sum(r.url.path == "/udl/onorbit/tuple" for r in fake.requests[before:])
+
+    # A read already in flight for this run: a second is not queued behind it.
+    api_module._NAMING.add(run.id)
+    try:
+        assert name_reads_during_a_scan() == 0
+    finally:
+        api_module._NAMING.discard(run.id)
+    # The run cancelled (what sign-out and expiry do): the read never starts.
+    run.cancel.set()
+    assert name_reads_during_a_scan() == 0
+    run.cancel.clear()
+    assert name_reads_during_a_scan() == 1
