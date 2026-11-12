@@ -48,7 +48,7 @@ PROCESS_STARTED: Final = time.time()
 
 
 def peak_memory_mb() -> float:
-    """The process's peak resident memory in MB (Linux reports kibibytes)."""
+    """The process's peak resident memory in MiB (Linux reports kibibytes; MB in the name)."""
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
 
 

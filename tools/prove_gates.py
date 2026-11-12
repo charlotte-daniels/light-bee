@@ -103,6 +103,24 @@ _S7632: Final = (
 _S7785: Final = "async function init() { return 1; }\n\ninit();\n"
 _S6582: Final = "export function f(point) {\n  return point && point.customdata;\n}\n"
 _S7773: Final = "export function f(value) {\n  return value ? 1 : NaN;\n}\n"
+_PLANTED: Final = "src/lightbee/planted.py"
+_MJS: Final = "src/lightbee/web/static/planted.mjs"
+_PYTHON_VARIANTS: Final = {
+    "S1244 against a negative float": "def f(x: float) -> bool:\n    return x == -1.0\n",
+    "S5886 through a module alias": (
+        "import dataclasses as dc\n\n\ndef f(s: object) -> object:\n    return dc.replace(s)\n"
+    ),
+    "S7632 an upper-case NOQA": (
+        "def f() -> None:\n    try:\n        pass\n"
+        "    except Exception:  # NOQA: BLE001 because\n        pass\n"
+    ),
+}
+_JAVASCRIPT_VARIANTS: Final = {
+    "S7785 void init()": "async function init() { return 1; }\n\nvoid init();\n",
+    "S7785 an async arrow": "const init = async () => 1;\n\ninit();\n",
+    "S7785 an async IIFE": "(async () => {\n  return 1;\n})();\n",
+    "S6582 an explicit null check": ("export function f(a) {\n  return a != null && a.b;\n}\n"),
+}
 _S6819_STATUS: Final = '<p id="progress" role="status" aria-live="polite"></p>\n'
 _S6819_IMG: Final = '<div id="plot" role="img" aria-label="figure"></div>\n'
 _PLANTED_HTML_MARKER: Final = "<!-- to" + "do: tidy -->\n"
@@ -164,6 +182,13 @@ def _replace(root: Path, relative: str, old: str, new: str) -> None:
     if old not in text:
         raise AssertionError(f"plant target not found in {relative}: {old!r}")
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def _writer(relative: str, text: str) -> Callable[[Path], None]:
+    def write(root: Path) -> None:
+        _write(root, relative, text)
+
+    return write
 
 
 @dataclass(frozen=True)
@@ -549,6 +574,15 @@ PLANTS: Final = (
         "sonar_javascript",
         "S7773 the global NaN",
         lambda r: _write(r, "src/lightbee/web/static/planted.mjs", _S7773),
+    ),
+    # The obvious variants of each, found by the 1.1 engineering review.
+    *(
+        Plant("sonar_python", f"variant: {name}", _writer(_PLANTED, text))
+        for name, text in _PYTHON_VARIANTS.items()
+    ),
+    *(
+        Plant("sonar_javascript", f"variant: {name}", _writer(_MJS, text))
+        for name, text in _JAVASCRIPT_VARIANTS.items()
     ),
     Plant(
         "sonar_html",

@@ -133,9 +133,9 @@ def test_a_full_run_produces_both_figures_the_flag_and_markings(
     ghosts = client.get(f"/api/runs/{run_id}/figures/causes?ghosts=true&basis=raw").json()
     assert len(fake.requests) == calls  # nothing re-read from the UDL
     ghost_names = [t["name"] for t in ghosts["data"] if t.get("legendgroup") == "ghost"]
-    assert ghost_names == ["1 year ago", "2 years ago"]
+    assert sorted(ghost_names) == ["1 year ago", "2 years ago"]
     assert ghosts["ghosts"] is True
-    assert "years ago beneath" in json.dumps(ghosts["layout"]["annotations"])
+    assert "1 year ago and 2 years ago beneath" in json.dumps(ghosts["layout"]["annotations"])
     assert "raw magnitude" in json.dumps(ghosts["layout"]["annotations"])
     assert "Beneath the light curve, the same week 1 year ago" in ghosts["summary"]
     assert client.get(f"/api/runs/{run_id}/figures/causes?ghosts=maybe").status_code == 422

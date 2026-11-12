@@ -14,11 +14,14 @@ Python (src/**/*.py)
   S7632  a `noqa` comment with anything after its rule codes
   S1244  `==` or `!=` against a float literal
 Dockerfile
-  S7020  a line over 120 characters (the flagged line was about 150; 95 passed)
+  S7020  a line over 120 characters (the flagged line was 129; its split
+         halves, 95 and under, passed)
 JavaScript (src/**/*.js, *.mjs; comments and strings ignored)
-  S7785  an async function called at the top level of a module without await,
-         or a top-level promise chain
-  S6582  `a && a.b` or `!a || a.b` where optional chaining would do
+  S7785  an async function (declared, or an async arrow bound to a name)
+         called at the top level of a module without await, `void` or not,
+         an async IIFE, or a top-level promise chain
+  S6582  `a && a.b`, `a != null && a.b` or `!a || a.b` where optional
+         chaining would do
   S7773  the global NaN, Infinity, isNaN, isFinite, parseInt or parseFloat
 HTML (src/**/*.html)
   S6819  a role attribute that a native element provides
@@ -41,19 +44,23 @@ _IDENTIFIER_LIKE: Final = re.compile(r"[\w.\-]+")
 _UNINFERRED_COPIES: Final = frozenset({"replace", "copy", "deepcopy"})
 _COPY_MODULES: Final = frozenset({"dataclasses", "copy"})
 _NOQA_WITH_TEXT: Final = re.compile(
-    r"#\s*noqa\s*:\s*[A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b)*[ \t]*[^\s,]"
+    r"#\s*noqa\s*:\s*[A-Z]+[0-9]+\b(?:\s*,\s*[A-Z]+[0-9]+\b)*[ \t]*[^\s,]", re.IGNORECASE
 )
 MAX_DOCKERFILE_LINE: Final = 120
 _GLOBAL_NUMBER: Final = re.compile(
     r"(?<![\w.$])(NaN|Infinity|isNaN|isFinite|parseInt|parseFloat)\b(?!\s*:)"
 )
 _AND_THEN_MEMBER: Final = re.compile(
-    r"(?<![\w.$])([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*&&\s*\1\s*[.\[]"
+    r"(?<![\w.$])([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*(?:!==?\s*(?:null|undefined)\s*)?&&\s*\1\s*[.\[]"
 )
 _NOT_OR_MEMBER: Final = re.compile(r"!\s*([A-Za-z_$][\w$]*(?:\.[\w$]+)*)\s*\|\|\s*\1\s*[.\[]")
-_ASYNC_FUNCTION: Final = re.compile(r"\basync\s+function\s+([A-Za-z_$][\w$]*)")
-_TOP_LEVEL_CALL: Final = re.compile(r"^([A-Za-z_$][\w$]*)\s*\([^;]*\)\s*;?\s*$")
+_ASYNC_FUNCTION: Final = re.compile(
+    r"\basync\s+function\s+([A-Za-z_$][\w$]*)"
+    r"|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*async\b"
+)
+_TOP_LEVEL_CALL: Final = re.compile(r"^(?:void\s+)?([A-Za-z_$][\w$]*)\s*\([^;]*\)\s*;?\s*$")
 _TOP_LEVEL_THEN: Final = re.compile(r"^[A-Za-z_$][\w$.]*\([^;]*\)\s*\.\s*(then|catch|finally)\s*\(")
+_ASYNC_IIFE: Final = re.compile(r"^(?:void\s+)?\(\s*async\b")
 # Roles a native element already carries (eslint-plugin-jsx-a11y's
 # prefer-tag-over-role, which SonarQube's S6819 follows). alert, tab, tablist,
 # tabpanel and the like have no native element and stay allowed.
@@ -146,28 +153,33 @@ def duplicated_literals(path: Path, tree: ast.AST) -> list[str]:
     ]
 
 
-def _copy_names(tree: ast.AST) -> set[str]:
-    """Local names bound to dataclasses.replace, copy.copy or copy.deepcopy."""
-    names: set[str] = set()
+def _copy_names(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """Local names for the copying functions, and for their modules (aliases included)."""
+    functions: set[str] = set()
+    modules: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in _COPY_MODULES:
-            names.update(
+            functions.update(
                 alias.asname or alias.name
                 for alias in node.names
                 if alias.name in _UNINFERRED_COPIES
             )
-    return names
+        if isinstance(node, ast.Import):
+            modules.update(
+                alias.asname or alias.name for alias in node.names if alias.name in _COPY_MODULES
+            )
+    return functions, modules
 
 
-def _copy_call(call: ast.Call, names: set[str]) -> str | None:
+def _copy_call(call: ast.Call, functions: set[str], modules: set[str]) -> str | None:
     """The copying function a call names, or None (str.replace is not one)."""
     func = call.func
-    if isinstance(func, ast.Name) and func.id in names:
+    if isinstance(func, ast.Name) and func.id in functions:
         return func.id
     if (
         isinstance(func, ast.Attribute)
         and isinstance(func.value, ast.Name)
-        and func.value.id in _COPY_MODULES
+        and func.value.id in modules
         and func.attr in _UNINFERRED_COPIES
     ):
         return f"{func.value.id}.{func.attr}"
@@ -176,7 +188,7 @@ def _copy_call(call: ast.Call, names: set[str]) -> str | None:
 
 def uninferred_returns(path: Path, tree: ast.AST) -> list[str]:
     """python:S5886, as SonarQube reported it."""
-    names = _copy_names(tree)
+    functions, modules = _copy_names(tree)
     problems: list[str] = []
     for function in ast.walk(tree):
         if not isinstance(function, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -186,13 +198,20 @@ def uninferred_returns(path: Path, tree: ast.AST) -> list[str]:
         for node in ast.walk(function):
             if not isinstance(node, ast.Return) or not isinstance(node.value, ast.Call):
                 continue
-            called = _copy_call(node.value, names)
+            called = _copy_call(node.value, functions, modules)
             if called is not None:
                 problems.append(
                     f"{path}:{node.lineno} S5886 {function.name} returns "
                     f"{called}(...), whose type SonarQube cannot infer"
                 )
     return problems
+
+
+def _float_literal(node: ast.expr) -> bool:
+    """A float constant, signed or not (`0.0`, `-1.0`, `+2.5`)."""
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub | ast.UAdd):
+        node = node.operand
+    return isinstance(node, ast.Constant) and type(node.value) is float
 
 
 def float_equality(path: Path, tree: ast.AST) -> list[str]:
@@ -206,7 +225,7 @@ def float_equality(path: Path, tree: ast.AST) -> list[str]:
             if not isinstance(operator, ast.Eq | ast.NotEq):
                 continue
             pair = operands[index : index + 2]
-            if any(isinstance(side, ast.Constant) and type(side.value) is float for side in pair):
+            if any(_float_literal(side) for side in pair):
                 problems.append(f"{path}:{node.lineno} S1244 equality test on a float")
     return problems
 
@@ -261,10 +280,11 @@ def javascript_problems(path: Path, text: str) -> list[str]:
     """javascript:S7785, S6582 and S7773."""
     code = code_only(text)
     problems: list[str] = []
-    asynchronous = set(_ASYNC_FUNCTION.findall(code))
+    asynchronous = {declared or bound for declared, bound in _ASYNC_FUNCTION.findall(code)}
     for number, line in _top_level_lines(code):
         call = _TOP_LEVEL_CALL.match(line)
-        if (call and call.group(1) in asynchronous) or _TOP_LEVEL_THEN.match(line):
+        unawaited = call is not None and call.group(1) in asynchronous
+        if unawaited or _TOP_LEVEL_THEN.match(line) or _ASYNC_IIFE.match(line):
             problems.append(f"{path}:{number} S7785 use top-level await")
     for number, line in enumerate(code.splitlines(), start=1):
         if _AND_THEN_MEMBER.search(line) or _NOT_OR_MEMBER.search(line):

@@ -14,7 +14,7 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 | Container budget | 2Gi memory, 2 CPU (measured: about 350 MB for one dense 2-year object; the cache is held to 900 MB across sessions) |
 | Port | `PORT`, default 8080, bound to 0.0.0.0; never set `PORT` in the Environment Variables tab |
 | Environment Variables tab | empty: every setting has a safe code default (`src/lightbee/config.py`) |
-| Health | `/`, `/healthz`, `/livez`, `/readyz`, `/ping` answer 200 unauthenticated (`/` to `HEAD` as well); `/readyz` reports the version, the process start (`started_unix`), `uptime_seconds` and `peak_memory_mb`, so a restart shows over HTTP |
+| Health | `/`, `/healthz`, `/livez`, `/readyz`, `/ping` answer 200 unauthenticated (`/` to `HEAD` as well); `/readyz` reports the version, the process start (`started_unix`), `uptime_seconds` and `peak_memory_mb` (MiB), so a restart shows over HTTP |
 | Logging | every line one JSON object on standard output (App Store standard: `timestamp`, `severity_text`, `severity_number`, `body`, `attributes`); request lines carry `http.request.header.x-request-id` and `user.email`; nothing on standard error |
 | Workers | one uvicorn worker (sessions live in process memory) |
 | Add-ons | none: nothing is stored, so no database or persistent volume |

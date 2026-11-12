@@ -138,8 +138,11 @@ class StdoutHandler(logging.StreamHandler[TextIO]):
         super().emit(record)
 
 
-# HTTP client libraries whose INFO and DEBUG lines carry full request URLs.
+# Loggers whose INFO and DEBUG lines carry full request URLs: uvicorn's access
+# log (which uvicorn enables whenever a log configuration is passed) and the
+# HTTP client libraries.
 QUIET_LIBRARIES: Final = ("httpx2", "httpcore2", "httpx", "httpcore")
+ACCESS_LOGGER: Final = "uvicorn.access"
 
 # The uvicorn options entry: every logger, uvicorn's included, through one
 # stdout handler and the JSON formatter. uvicorn applies this before it
@@ -151,8 +154,10 @@ LOG_CONFIG: Final[dict[str, Any]] = {
     "loggers": {
         "uvicorn": {"handlers": [], "level": "INFO", "propagate": True},
         "uvicorn.error": {"handlers": [], "level": "INFO", "propagate": True},
-        "uvicorn.access": {"handlers": [], "level": "INFO", "propagate": True},
         **{name: {"level": "WARNING"} for name in QUIET_LIBRARIES},
+        # Off outright: uvicorn decides to write access lines when this logger
+        # has any handler, its own or a parent's through propagation.
+        ACCESS_LOGGER: {"handlers": [], "level": "WARNING", "propagate": False},
     },
     "root": {"handlers": ["stdout"], "level": "INFO"},
 }
@@ -192,16 +197,17 @@ def configure_logging() -> None:
         root.addHandler(StdoutHandler())
     if root.level == logging.NOTSET or root.level > logging.INFO:
         root.setLevel(logging.INFO)
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "lightbee"):
+    for name in ("uvicorn", "uvicorn.error", ACCESS_LOGGER, "lightbee"):
         named = logging.getLogger(name)
         for handler in list(named.handlers):
             if _writes_to_a_standard_stream(handler):
                 named.removeHandler(handler)
-        named.propagate = True
+        named.propagate = name != ACCESS_LOGGER
     logging.getLogger("lightbee").setLevel(logging.INFO)
-    # The HTTP client logs every request's full URL, query string included, at
-    # INFO and below; only its warnings and errors may reach the log.
-    for name in QUIET_LIBRARIES:
+    # uvicorn's access lines and the HTTP client's request lines carry full
+    # URLs, query strings included, at INFO; uvicorn's are off outright and
+    # the client's held to warnings. `RequestContext` writes the request line.
+    for name in (*QUIET_LIBRARIES, ACCESS_LOGGER):
         logging.getLogger(name).setLevel(logging.WARNING)
     logging.captureWarnings(True)
     sys.excepthook = _log_uncaught
@@ -237,6 +243,16 @@ Send = Callable[[Message], Awaitable[None]]
 App = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 
+def _single_header(scope: Scope, name: bytes) -> str | None:
+    """A header sent exactly once; repeated, it is ignored (fail closed).
+
+    Whether the gateway's value would come first or last is not known, so a
+    request carrying two cannot choose which one is logged.
+    """
+    values = [value for key, value in scope.get("headers", []) if key == name]
+    return values[0].decode("latin-1") if len(values) == 1 else None
+
+
 class RequestContext:
     """Outermost ASGI middleware: request ID and email in context, one line per request.
 
@@ -251,13 +267,10 @@ class RequestContext:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        headers = dict(scope.get("headers", []))
-        request_id = headers.get(b"x-request-id")
-        email = headers.get(b"x-auth-request-email")
-        id_token = REQUEST_ID.set(
-            clean_request_id(request_id.decode("latin-1") if request_id else None)
-        )
-        email_token = USER_EMAIL.set(clean_email(email.decode("latin-1") if email else None))
+        request_id = _single_header(scope, b"x-request-id")
+        email = _single_header(scope, b"x-auth-request-email")
+        id_token = REQUEST_ID.set(clean_request_id(request_id))
+        email_token = USER_EMAIL.set(clean_email(email))
         path = str(scope.get("path", ""))
         quiet = path in QUIET_PATHS or path.startswith(QUIET_PREFIX)
         status = 0

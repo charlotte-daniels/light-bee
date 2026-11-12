@@ -455,6 +455,10 @@ async function ghostsChanged() {
   if (!state.run || !state.drawn.has('done')) return;
   try {
     await drawCauses();
+    // The live status line tells a screen reader the redraw happened.
+    $('progress').textContent = $('ghost-years').checked
+      ? 'Ghost years on: the same week in earlier years is drawn beneath the light curve.'
+      : 'Ghost years off.';
   } catch (error) {
     $('progress').textContent = error.message;
   }

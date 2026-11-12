@@ -50,6 +50,9 @@ def main(
     run: Callable[..., None] = uvicorn.run,
 ) -> None:
     """Start the one-worker server for `asgi:app`."""
+    # First, so a failure while uvicorn imports the app (a bad setting, say)
+    # is one FATAL JSON line on stdout rather than a traceback on stderr.
+    configure_logging()
     run("asgi:app", **server_options(os.environ if environ is None else environ))
 
 

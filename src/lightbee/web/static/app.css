@@ -79,11 +79,12 @@ input[aria-invalid="true"] { border-color: var(--error); }
 .mode { padding-top: 0.75rem; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: space-between; }
 .check { display: flex; flex-wrap: wrap; gap: 0.25rem 0.5rem; align-items: center; }
-.check input { width: 1.25rem; height: 1.25rem; margin: 0; accent-color: var(--blue-2); }
-.check label { color: var(--text); font-size: 0.95rem; margin: 0; }
+.check input { width: 1.25rem; height: 1.25rem; min-height: 0; margin: 0; accent-color: var(--blue-2); }
+.check label, .toggle label { color: var(--text); font-size: 0.95rem; }
+.check label { margin: 0; }
 .check .hint { margin: 0; font-size: 0.9rem; }
 .toggle { border: 1px solid var(--line); border-radius: 0; display: flex; gap: 0.5rem; align-items: center; padding: 0.25rem 0.75rem; }
-.toggle label { color: var(--text); font-size: 0.95rem; margin-right: 0.5rem; }
+.toggle label { margin-right: 0.5rem; }
 
 .plot { width: 100%; margin: 0.5rem 0 0; }
 .plot-seasonal { height: 2242px; max-width: 1100px; margin-left: auto; margin-right: auto; }

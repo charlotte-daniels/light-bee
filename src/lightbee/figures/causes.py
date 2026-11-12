@@ -54,12 +54,14 @@ SENSOR_COLOURS: Final = (
 # Neighbours get their own dashed palette, so none is mistaken for a sensor.
 NEIGHBOUR_COLOURS: Final = ("#ffffff", "#ffb3c1", "#b8f2e6", "#ffd6a5", "#cdb4db")
 # Ghost years: Okabe-Ito orange (1 year ago) and reddish purple (2 years ago),
-# open markers in two shapes, so neither depends on colour alone. Both read on
-# black (contrast 9.3:1 and 6.9:1) and stay apart from each other and from the
-# day palette under simulated protanopia, deuteranopia and tritanopia (CIELAB
-# difference at least 16 from every day colour, 17 between the two).
+# open markers in two shapes and sizes, so neither depends on colour alone.
+# Drawn opaque, both read on black (contrast 9.3:1 and 6.9:1) and stay apart
+# from each other and from the day palette under simulated protanopia,
+# deuteranopia and tritanopia (CIELAB difference at least 16 from every day
+# colour, 17 between the two).
 GHOST_COLOURS: Final = ("#e69f00", "#cc79a7")
 GHOST_SYMBOLS: Final = ("circle-open", "diamond-open")
+GHOST_SIZES: Final = (9, 7)
 LIGHT_CURVE_TITLE: Final = "Light curve over SEPA"
 MAX_SENSORS: Final = len(SENSOR_COLOURS)
 MAX_APPROACH_TRACES: Final = 20
@@ -180,11 +182,15 @@ def _light_curve_title(ghosts: bool, history_read: bool, shown: Sequence[dict[st
     if not ghosts:
         return LIGHT_CURVE_TITLE
     if not history_read:
-        return f"{LIGHT_CURVE_TITLE} (earlier years not read yet)"
+        return f"{LIGHT_CURVE_TITLE} (earlier years not available)"
     if not shown:
         return f"{LIGHT_CURVE_TITLE} (no observations in this week of earlier years)"
-    years = " and ".join(str(trace["meta"]) for trace in shown)
-    return f"{LIGHT_CURVE_TITLE}, with the same week {years} years ago beneath"
+    years = " and ".join(str(trace["name"]) for trace in _nearest_first(shown))
+    return f"{LIGHT_CURVE_TITLE}, with the same week {years} beneath"
+
+
+def _nearest_first(shown: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(shown, key=lambda trace: int(trace["meta"]))
 
 
 def ghost_sentence(ghosts: bool, history: Series | None, shown: Sequence[dict[str, Any]]) -> str:
@@ -192,10 +198,10 @@ def ghost_sentence(ghosts: bool, history: Series | None, shown: Sequence[dict[st
     if not ghosts:
         return ""
     if history is None:
-        return " Ghost years are on, but the earlier years have not been read yet."
+        return " Ghost years are on, but the earlier years are not available."
     if not shown:
         return " Ghost years are on; there are no observations in this week of earlier years."
-    parts = [f"{trace['name']} ({len(trace['x']):,} points)" for trace in shown]
+    parts = [f"{trace['name']} ({len(trace['x']):,} points)" for trace in _nearest_first(shown)]
     return f" Beneath the light curve, the same week {' and '.join(parts)}."
 
 
@@ -268,8 +274,12 @@ def _approach_labels(
 
 def _ghost_traces(history: Series, start: int, end: int) -> list[dict[str, Any]]:
     traces = []
-    # Drawn first, so every recent day sits on top of them.
-    for ghost in ghost_years(history, start_ms=start, end_ms=end):
+    # Drawn before every recent day, oldest year first, so the nearer year sits
+    # above the older one and the days above both. The rings nest (the older
+    # one smaller), so all three stay visible where they coincide; the legend
+    # still lists the nearer year first.
+    found = ghost_years(history, start_ms=start, end_ms=end)
+    for ghost in sorted(found, key=lambda g: g.years_ago, reverse=True):
         keep = thin(ghost.sepa.size, GHOST_POINTS)
         style = min(ghost.years_ago, len(GHOST_COLOURS)) - 1
         traces.append(
@@ -278,20 +288,20 @@ def _ghost_traces(history: Series, start: int, end: int) -> list[dict[str, Any]]
                 "mode": "markers",
                 "name": f"{ghost.years_ago} year{'s' if ghost.years_ago > 1 else ''} ago",
                 "meta": ghost.years_ago,
+                "legendrank": ghost.years_ago,
                 "x": rounded(ghost.sepa[keep], 2),
                 "y": rounded(ghost.mag[keep], 3),
                 "xaxis": "x",
                 "yaxis": "y",
                 "marker": {
-                    "size": 6,
+                    "size": GHOST_SIZES[style],
                     "symbol": GHOST_SYMBOLS[style],
                     "color": GHOST_COLOURS[style],
-                    "opacity": 0.8,
-                    "line": {"width": 1.2, "color": GHOST_COLOURS[style]},
+                    "line": {"width": 1.5, "color": GHOST_COLOURS[style]},
                 },
                 "hoverinfo": "skip",
                 "legendgroup": "ghost",
-                "legendgrouptitle": {"text": "Same week, earlier years"},
+                "legendgrouptitle": {"text": "Light curve: same week, earlier years"},
             }
         )
     return traces

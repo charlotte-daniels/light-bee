@@ -332,21 +332,35 @@ def test_ghost_years_are_an_overlay_off_by_default_in_two_distinct_styles() -> N
 
     on = figure(True)
     ghosts = [t for t in on["data"] if t.get("legendgroup") == "ghost"]
-    assert [t["name"] for t in ghosts] == ["1 year ago", "2 years ago"]
-    # Beneath the recent days: drawn before every other trace.
+    # Beneath the recent days, the older year drawn first so the nearer sits
+    # on it; the legend still lists the nearer year first.
     assert on["data"][:2] == ghosts
-    colours = [t["marker"]["color"] for t in ghosts]
-    assert colours == list(causes.GHOST_COLOURS)
-    assert len(set(colours)) == 2
-    assert len({t["marker"]["symbol"] for t in ghosts}) == 2
-    assert not set(colours) & {causes.NEWEST, causes.day_colour(1), causes.day_colour(6)}
-    assert light_title(on) == "Light curve over SEPA, with the same week 1 and 2 years ago beneath"
+    assert [t["name"] for t in ghosts] == ["2 years ago", "1 year ago"]
+    assert [t["legendrank"] for t in ghosts] == [2, 1]
+    one, two = ghosts[1], ghosts[0]
+    assert (one["marker"]["color"], two["marker"]["color"]) == causes.GHOST_COLOURS
+    assert one["marker"]["symbol"] != two["marker"]["symbol"]
+    # The rings nest: the older one is smaller, so both show where they coincide.
+    assert one["marker"]["size"] > two["marker"]["size"]
+    assert all("opacity" not in t["marker"] for t in ghosts)
+    colours = {t["marker"]["color"] for t in ghosts}
+    assert not colours & {causes.NEWEST, causes.day_colour(1), causes.day_colour(6)}
+    assert light_title(on) == (
+        "Light curve over SEPA, with the same week 1 year ago and 2 years ago beneath"
+    )
     assert "Beneath the light curve, the same week 1 year ago (" in on["summary"]
-    assert "2 years ago (" in on["summary"]
+    assert ") and 2 years ago (" in on["summary"]
+
+    # Only the nearer year has data: singular, and no "1 years ago".
+    year_ago = epoch[(epoch < window[0] - 300 * DAY_MS) & (epoch > window[0] - 400 * DAY_MS)]
+    one_year = Series.from_arrays(year_ago, np.full(year_ago.size, 12.0), np.zeros(year_ago.size))
+    single = figure(True, past=one_year)
+    assert light_title(single) == "Light curve over SEPA, with the same week 1 year ago beneath"
+    assert "years ago" not in single["summary"]
 
     unread = figure(True, past=None)
-    assert "not read yet" in light_title(unread)
-    assert "not been read yet" in unread["summary"]
+    assert "not available" in light_title(unread)
+    assert "earlier years are not available" in unread["summary"]
     recent_only = Series.from_arrays(epoch[-24:], np.full(24, 12.0), np.zeros(24))
     empty = figure(True, past=recent_only)
     assert "no observations in this week of earlier years" in light_title(empty)

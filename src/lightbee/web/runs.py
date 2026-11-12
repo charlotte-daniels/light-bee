@@ -20,6 +20,7 @@ data that does not fit the question asked.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import time
@@ -371,7 +372,11 @@ def _read_spans(
         return read_observations(client, run.request.sat_no, span, now=now, on_progress=progress)
 
     pool = ThreadPoolExecutor(max_workers=len(spans))
-    futures = [pool.submit(read, index, span) for index, span in enumerate(spans)]
+    # Each reader runs in this run's context, so its lines carry the request ID.
+    futures = [
+        pool.submit(contextvars.copy_context().run, read, index, span)
+        for index, span in enumerate(spans)
+    ]
     try:
         for future in as_completed(futures):
             future.result()  # the first failure surfaces here, at once

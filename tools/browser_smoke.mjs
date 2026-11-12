@@ -72,7 +72,7 @@ check(await ghostLegend() === 0, 'no ghost-year traces are drawn while off');
 check((await page.textContent('#plot-causes')).includes('Light curve over SEPA'), 'the light curve panel is titled without ghost years');
 await page.focus('#ghost-years');
 await page.keyboard.press('Space');
-await page.waitForFunction(() => document.querySelector('#plot-causes').textContent.includes('years ago beneath'));
+await page.waitForFunction(() => document.querySelector('#plot-causes').textContent.includes('ago beneath'));
 check(await page.isChecked('#ghost-years'), 'the ghost years checkbox works from the keyboard');
 check(await ghostLegend() === 2, 'both ghost years appear in the legend ("1 year ago", "2 years ago")');
 check((await page.textContent('#causes-summary')).includes('1 year ago'), 'the text summary names the ghost years');
@@ -132,7 +132,7 @@ check((await page.textContent('#plot-causes')).includes('raw magnitude'), 'the a
 check(!(await page.textContent('#plot-seasonal')).includes('range-normalised'), 'and redraws Seasonal Behaviour? on raw magnitude');
 check(await ghostLegend() === 2, 'ghost years stay on across the magnitude toggle');
 await page.uncheck('#ghost-years');
-await page.waitForFunction(() => !document.querySelector('#plot-causes').textContent.includes('years ago beneath'));
+await page.waitForFunction(() => !document.querySelector('#plot-causes').textContent.includes('ago beneath'));
 check(await ghostLegend() === 0, 'switching ghost years off removes them');
 
 const cdp = await context.newCDPSession(page);

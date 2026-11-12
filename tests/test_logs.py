@@ -11,12 +11,17 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
+import signal
+import socket
+import subprocess
 import sys
 import threading
 import time
 from typing import Any
 
+import httpx2
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
@@ -152,6 +157,8 @@ def test_the_container_set_up_writes_json_to_stdout_and_nothing_to_stderr(
     logging.getLogger("lightbee.audit").info("run done")
     logging.getLogger("lightbee").debug("not shown at INFO")
     logging.getLogger("httpx2").info("HTTP Request: GET https://udl.test/x?satNo=1")
+    # uvicorn's access line prints the query string; found by the image probe.
+    logging.getLogger("uvicorn.access").info('1.2.3.4:5 - "GET /api/x?satNo=2 HTTP/1.1" 200')
     thread = threading.Thread(target=lambda: 1 / 0)
     thread.start()
     thread.join()
@@ -190,6 +197,104 @@ def test_a_handler_printing_to_stderr_is_removed_and_info_is_restored() -> None:
         if not isinstance(h, StdoutHandler) and getattr(h, "stream", None) is sys.stderr
     ]
     assert root.level == logging.INFO
+
+
+def _free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def test_the_real_server_logs_no_query_string_no_probe_and_nothing_to_stderr() -> None:
+    """The container's own entry point, over real HTTP: uvicorn's access log stays off.
+
+    Found by the 1.1 image probe: uvicorn writes its access line, query string
+    included, whenever its access logger can reach a handler.
+    """
+    port = _free_port()
+    env = {
+        **os.environ,
+        "PORT": str(port),
+        "HOST": "127.0.0.1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+    }
+    server = subprocess.Popen(
+        [sys.executable, "-m", "lightbee"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    base = f"http://127.0.0.1:{port}"
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                if httpx2.get(f"{base}/healthz", timeout=1).status_code == 200:
+                    break
+            except httpx2.TransportError:
+                time.sleep(0.1)
+        headers = {"X-Request-Id": "real-1", "X-Auth-Request-Email": EMAIL}
+        assert (
+            httpx2.get(f"{base}/api/session?password=QSTRSECRET", headers=headers).status_code
+            == 200
+        )
+        assert httpx2.head(f"{base}/").status_code == 200
+    finally:
+        server.send_signal(signal.SIGTERM)
+        out, err = server.communicate(timeout=30)
+    assert err == ""
+    parsed = lines(out)
+    assert "QSTRSECRET" not in out
+    assert all(line["attributes"]["code.namespace"] != "uvicorn.access" for line in parsed)
+    requests = [line for line in parsed if line["body"] == "request"]
+    assert [line["attributes"]["url.path"] for line in requests] == ["/api/session"]
+    assert requests[0]["attributes"][ID_KEY] == "real-1"
+    assert requests[0]["attributes"][EMAIL_KEY] == EMAIL
+    assert any(line["body"].startswith("Uvicorn running on") for line in parsed)
+
+
+def test_a_start_up_failure_is_a_fatal_json_line_not_a_traceback_on_stderr() -> None:
+    env = {
+        **os.environ,
+        "PORT": str(_free_port()),
+        "HOST": "127.0.0.1",
+        "PYTHONPATH": os.pathsep.join(sys.path),
+        "LIGHTBEE_MAX_SESSIONS": "zz",
+    }
+    done = subprocess.run(
+        [sys.executable, "-m", "lightbee"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert done.returncode != 0
+    assert done.stderr == ""
+    fatal = [line for line in lines(done.stdout) if line["severity_text"] == "FATAL"]
+    assert fatal
+    assert fatal[0]["attributes"]["exception.type"] == "ConfigError"
+
+
+def test_a_repeated_identity_header_is_not_logged(capsys: pytest.CaptureFixture[str]) -> None:
+    app = create_app(Settings())
+    capsys.readouterr()
+    with TestClient(app, base_url="https://testserver") as client:
+        client.get(
+            "/api/session",
+            headers=[
+                ("X-Request-Id", "first-id"),
+                ("X-Request-Id", "second-id"),
+                ("X-Auth-Request-Email", "forged@example.test"),
+                ("X-Auth-Request-Email", EMAIL),
+            ],
+        )
+    out = capsys.readouterr().out
+    (line,) = [line for line in lines(out) if line["body"] == "request"]
+    assert EMAIL_KEY not in line["attributes"]
+    assert line["attributes"][ID_KEY] not in ("first-id", "second-id")
+    assert "forged@" not in out
 
 
 def test_uvicorn_is_given_the_json_configuration() -> None:
