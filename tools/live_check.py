@@ -88,6 +88,8 @@ FIELDS: Final = (
 RANGE_COLUMNS: Final = ("range",)
 ELSETS: Final = "/udl/elset/tuple"
 HISTORY: Final = "/udl/eoobservation/history"
+ONORBIT_TUPLE: Final = "/udl/onorbit/tuple"
+ONORBIT: Final = "/udl/onorbit"
 
 # A client factory takes optional client settings (for example a larger body
 # cap for the speed comparison) and returns a fresh client.
@@ -419,6 +421,49 @@ def check_elset_queries(make_client: ClientFactory, report: Report, now: datetim
     )
 
 
+def _name_variants(objects: list[int]) -> dict[str, tuple[str, dict[str, str]]]:
+    """Each way 1.2 might read satellite names, so the report shows which one answers."""
+    first = str(objects[0])
+    columns = "classificationMarking,satNo,commonName"
+    return {
+        "tuple_one": (ONORBIT_TUPLE, {"satNo": first, "columns": columns}),
+        "tuple_list": (ONORBIT_TUPLE, {"satNo": ",".join(map(str, objects)), "columns": columns}),
+        "plain_one": (ONORBIT, {"satNo": first}),
+        "plain_list": (ONORBIT, {"satNo": ",".join(map(str, objects))}),
+    }
+
+
+def _name_outcome(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """What one name read returned: fields present, markings and the names themselves.
+
+    Satellite names are public catalogue data, so they are shown; nothing else
+    from the records is.
+    """
+    return {
+        "ok": True,
+        "records": len(records),
+        "fields": sorted({key for record in records for key in record})[:60],
+        "markings": dict(Counter(str(r.get("classificationMarking"))[:60] for r in records)),
+        "names": {
+            str(r.get("satNo", r.get("onOrbit.satNo"))): str(r.get("commonName"))[:60]
+            for r in records[:10]
+        },
+    }
+
+
+def check_names(make_client: ClientFactory, report: Report, objects: list[int]) -> None:
+    """1.2: can satellite names be read, from which endpoint, in one request or one each?"""
+    outcomes: dict[str, dict[str, Any]] = {}
+    with make_client() as client:
+        for name, (path, params) in _name_variants(objects).items():
+            try:
+                outcomes[name] = _name_outcome(client.read(path, params))
+            except UdlError as exc:
+                outcomes[name] = {"ok": False, **_failure(exc)}
+    named = [o for o in outcomes.values() if o.get("ok") and o.get("names")]
+    report.record("names", bool(named), variants=outcomes)
+
+
 def check_catalogue(make_client: ClientFactory, report: Report, now: datetime) -> None:
     with make_client() as client:
         read = partial(read_geo_catalogue, client, now - timedelta(hours=6))
@@ -552,6 +597,7 @@ def run(make_client: ClientFactory, args: argparse.Namespace, now: datetime) -> 
     if not check_login(make_client, report, now):
         return report
     steps: list[tuple[str, Callable[[], None]]] = [
+        ("names", partial(check_names, make_client, report, list(args.objects))),
         ("elset_queries", partial(check_elset_queries, make_client, report, now)),
         ("trimmed_vs_full", partial(check_speed, make_client, report, now)),
         ("time_filter_bounds", partial(check_boundaries, make_client, report, now)),
@@ -566,6 +612,8 @@ def run(make_client: ClientFactory, args: argparse.Namespace, now: datetime) -> 
             (f"cold_{s}", partial(check_cold, make_client, report, now, s, args.years))
             for s in args.objects
         )
+    if args.names_only:
+        steps = steps[:1]  # the names check is first
     for name, step in steps:
         try:
             step()
@@ -579,6 +627,11 @@ def _arguments(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--objects", type=int, nargs="+", default=list(REFERENCE_OBJECTS))
     parser.add_argument("--years", type=float, default=2.0)
     parser.add_argument("--skip-cold", action="store_true")
+    parser.add_argument(
+        "--names-only",
+        action="store_true",
+        help="run only the login and the 1.2 satellite-name check (about 10 seconds)",
+    )
     parser.add_argument("--out", type=Path, default=Path("live-check-report.json"))
     parser.add_argument(
         "--use-proxy",

@@ -31,7 +31,11 @@ def _fake() -> FakeUdl:
     ]
     elsets += [elset_record(40000 + k, NOW - timedelta(hours=6)) for k in range(120)]
     _consistent_sepa(history)
-    return FakeUdl(history=history, live=[], elsets=elsets)
+    onorbit = [
+        {"satNo": sat, "commonName": f"TEST SAT {sat}", "classificationMarking": "U"}
+        for sat in live_check.REFERENCE_OBJECTS
+    ]
+    return FakeUdl(history=history, live=[], elsets=elsets, onorbit=onorbit)
 
 
 def _consistent_sepa(history: list[dict[str, Any]], sign: float = 1.0) -> None:
@@ -85,6 +89,34 @@ def test_every_check_passes_against_a_healthy_service() -> None:
     assert set(analysis["seconds"]) == {"grid", "seasonal_flag", "approaches"}
     assert analysis["approaches_last_7_days"]["within_reach"] >= 0
     assert all(request.method == "GET" for request in fake.requests)
+
+
+def test_the_names_check_shows_each_endpoint_its_fields_markings_and_names() -> None:
+    fake = _fake()
+    fake.refuse_param["/udl/onorbit"] = "satNo"  # one candidate refuses, as a real one may
+    report = live_check.run(_factory(fake), live_check._arguments(["--names-only"]), NOW)
+    assert list(report.checks) == ["login", "names"]
+    assert report.failures == []
+    variants = report.checks["names"]["variants"]
+    assert variants["tuple_one"]["names"] == {"43874": "TEST SAT 43874"}
+    assert variants["tuple_one"]["fields"] == ["classificationMarking", "commonName", "satNo"]
+    assert variants["tuple_one"]["markings"] == {"U": 1}
+    assert variants["tuple_list"]["records"] == 3
+    assert variants["plain_one"]["ok"] is False
+    assert "satNo" in variants["plain_one"]["detail"]
+    assert {r.url.path for r in fake.requests} == {
+        "/udl/elset/tuple",
+        "/udl/onorbit/tuple",
+        "/udl/onorbit",
+    }
+    assert all(request.method == "GET" for request in fake.requests)
+
+
+def test_the_names_check_fails_when_no_endpoint_gives_a_name() -> None:
+    fake = _fake()
+    fake.onorbit = []
+    report = live_check.run(_factory(fake), live_check._arguments(["--names-only"]), NOW)
+    assert report.failures == ["names"]
 
 
 def test_a_refused_login_stops_after_the_first_check() -> None:

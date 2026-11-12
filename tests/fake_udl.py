@@ -87,6 +87,8 @@ class FakeUdl:
     history: list[dict[str, Any]] = field(default_factory=list)
     live: list[dict[str, Any]] = field(default_factory=list)
     elsets: list[dict[str, Any]] = field(default_factory=list)
+    # On-orbit catalogue records (satNo, commonName, classificationMarking), for names.
+    onorbit: list[dict[str, Any]] = field(default_factory=list)
     requests: list[httpx2.Request] = field(default_factory=list)
     fail_once: dict[str, int] = field(default_factory=dict)
     # A path mapped to a query parameter the fake refuses there with HTTP 400,
@@ -114,6 +116,8 @@ class FakeUdl:
         if column is not None and column in params.get("columns", "").split(","):
             message = f"Column {column} is not available to select"
             return httpx2.Response(400, content=message.encode())
+        if request.url.path in ("/udl/onorbit/tuple", "/udl/onorbit"):
+            return httpx2.Response(200, content=json.dumps(self._objects(params)))
         source = {
             "/udl/eoobservation/history": (self.history, "obTime"),
             "/udl/eoobservation/tuple": (self.live, "obTime"),
@@ -123,6 +127,13 @@ class FakeUdl:
             return httpx2.Response(404)
         records, time_field = source
         return httpx2.Response(200, content=json.dumps(self._select(records, time_field, params)))
+
+    def _objects(self, params: dict[str, str]) -> list[dict[str, Any]]:
+        """On-orbit records for one satNo or a comma list, only the requested columns."""
+        wanted_numbers = set(params.get("satNo", "").split(","))
+        wanted = params.get("columns", "").split(",") if params.get("columns") else None
+        chosen = [r for r in self.onorbit if str(r.get("satNo")) in wanted_numbers]
+        return [r if wanted is None else {k: r[k] for k in wanted if k in r} for r in chosen]
 
     @staticmethod
     def _ordered(records: list[dict[str, Any]], time_field: str) -> tuple[list[str], list[int]]:
