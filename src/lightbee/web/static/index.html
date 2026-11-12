@@ -62,7 +62,7 @@
       <p class="error" id="run-error" role="alert"></p>
     </form>
 
-    <p id="progress" class="progress" role="status" aria-live="polite"></p>
+    <output id="progress" class="progress" aria-live="polite"></output>
 
     <fieldset class="toggle" id="basis-toggle">
       <legend>Magnitude (both modes)</legend>
@@ -93,7 +93,7 @@
       <div class="toolbar">
         <button type="button" class="secondary" id="export-seasonal" disabled>Download PNG</button>
       </div>
-      <div id="plot-seasonal" class="plot plot-seasonal" role="img" aria-label="Seasonal Behaviour? figure, not yet drawn"></div>
+      <figure id="plot-seasonal" class="plot plot-seasonal" aria-label="Seasonal Behaviour? figure, not yet drawn"></figure>
     </section>
 
     <section id="panel-causes" role="tabpanel" aria-labelledby="tab-causes" class="mode" hidden>
@@ -114,7 +114,7 @@
         <p class="error" id="scan-error" role="alert"></p>
       </form>
       <p class="visually-hidden" id="causes-summary"></p>
-      <div id="plot-causes" class="plot plot-causes" role="img" aria-label="Other Causes figure, not yet drawn"></div>
+      <figure id="plot-causes" class="plot plot-causes" aria-label="Other Causes figure, not yet drawn"></figure>
     </section>
   </section>
 </main>

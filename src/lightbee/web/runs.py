@@ -26,7 +26,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final, Literal
 
@@ -232,7 +232,9 @@ def execute(
         run.set(stage="failed", message=f"The UDL read failed: {error}.")
         _audit(run, "failed")
         return None
-    except Exception:  # noqa: BLE001 - a background job must always end in a stated state
+    # A background job must always end in a stated state, so it catches
+    # everything (ruff BLE001).
+    except Exception:  # noqa: BLE001
         _LOG.exception("run %s failed unexpectedly", run.id)
         run.set(stage="failed", message="The run failed unexpectedly; please try again.")
         _audit(run, "failed")
@@ -486,7 +488,15 @@ def _series(data: RunData, photometry: Photometry, basis: Basis) -> Series:
     # Range-normalised was chosen, but later data has less range coverage:
     # held to the chosen basis, where range is missing the value is missing.
     mag = np.asarray(photometry.mag_norm, dtype=np.float64)
-    return replace(series, mag=mag, basis="range-normalised")
+    return Series(
+        series.epoch_ms,
+        mag,
+        series.sepa,
+        series.geolon,
+        series.sensor,
+        series.sensors,
+        "range-normalised",
+    )
 
 
 def flag_of(run: Run, basis: Basis) -> SeasonalFlag | None:

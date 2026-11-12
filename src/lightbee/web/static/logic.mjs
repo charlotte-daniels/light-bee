@@ -38,7 +38,7 @@ export function selectionTimes(event) {
   if (!event || !Array.isArray(event.points)) return [];
   const times = new Set();
   for (const point of event.points) {
-    const value = point && point.customdata;
+    const value = point?.customdata;
     if (Number.isInteger(value) && value >= 0) times.add(value);
   }
   return [...times].sort((a, b) => a - b).slice(0, MAX_SELECTED);
@@ -104,7 +104,7 @@ export function checkRunInputs(values, today) {
 
 /** A datetime-local value ("2026-11-10T03:04") read as UTC milliseconds, or NaN. */
 export function utcInput(value) {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(String(value))) return NaN;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(String(value))) return Number.NaN;
   return Date.parse(`${value}${value.length === 16 ? ':00' : ''}Z`);
 }
 

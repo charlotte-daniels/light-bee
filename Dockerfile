@@ -54,7 +54,8 @@ RUN apk info -R .python-rundeps > /tmp/rundeps \
            /usr/local/lib/python3.12/sqlite3 \
            /usr/local/lib/python3.12/lib-dynload/_sqlite3.cpython-312-*.so \
  && ! apk info -e sqlite-libs \
- && [ -z "$(find / -xdev \( -name 'libsqlite3.so*' -o -name '_sqlite3.*' -o -path /usr/local/lib/python3.12/sqlite3 \) -print)" ]
+ && [ -z "$(find / -xdev \( -name 'libsqlite3.so*' -o -name '_sqlite3.*' \
+        -o -path /usr/local/lib/python3.12/sqlite3 \) -print)" ]
 COPY --from=build /opt/venv /opt/venv
 WORKDIR /app
 COPY src ./src

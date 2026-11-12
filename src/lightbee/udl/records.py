@@ -325,7 +325,7 @@ def elset_or_problem(record: dict[str, Any], sat_no: int | None = None) -> Elset
         if math.isnan(value):
             return name
         elements.append(value)
-    if elements[0] == 0.0:
+    if elements[0] <= 0.0:  # bounded to 0 to 20 above, so this means exactly zero
         return "meanMotion"
     raw_period = record.get("period")
     period = (

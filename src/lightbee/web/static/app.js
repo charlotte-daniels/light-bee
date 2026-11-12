@@ -319,7 +319,7 @@ async function scanRange(event) {
 }
 
 async function scan(times) {
-  if (!times.length || !state.run || state.run.stage !== 'done') return;
+  if (!times.length || state.run?.stage !== 'done') return;
   const threshold = scanThreshold();
   if (threshold === null) { fieldError('threshold', 'The screening distance must be 1 to 2,000 km.'); return; }
   $('progress').textContent = `Scanning ${times.length.toLocaleString('en-GB')} selected observations…`;
@@ -474,4 +474,4 @@ async function init() {
   }
 }
 
-init();
+await init();

@@ -102,12 +102,15 @@ class StaticAsset:
     media_type: str
 
 
+_CSS: Final = "text/css; charset=utf-8"
+_JAVASCRIPT: Final = "text/javascript; charset=utf-8"
+
 STATIC_ASSETS: Final = {
-    "app.css": StaticAsset("app.css", "text/css; charset=utf-8"),
-    "app.js": StaticAsset("app.js", "text/javascript; charset=utf-8"),
-    "logic.mjs": StaticAsset("logic.mjs", "text/javascript; charset=utf-8"),
-    "plotly-rules.css": StaticAsset("plotly-rules.css", "text/css; charset=utf-8"),
-    "plotly.min.js": StaticAsset("vendor/plotly.min.js", "text/javascript; charset=utf-8"),
+    "app.css": StaticAsset("app.css", _CSS),
+    "app.js": StaticAsset("app.js", _JAVASCRIPT),
+    "logic.mjs": StaticAsset("logic.mjs", _JAVASCRIPT),
+    "plotly-rules.css": StaticAsset("plotly-rules.css", _CSS),
+    "plotly.min.js": StaticAsset("vendor/plotly.min.js", _JAVASCRIPT),
 }
 
 
@@ -129,9 +132,10 @@ def _add_security_headers(app: FastAPI) -> None:
     ) -> Response:
         try:
             response = await call_next(request)
-        except Exception:  # noqa: BLE001 - last-resort handler; detail logged, client told nothing
-            # The detail stays in the server log; the client gets a generic
-            # message that still carries every security header.
+        # A last-resort handler, so it catches everything (ruff BLE001): the
+        # detail stays in the server log; the client gets a generic message
+        # that still carries every security header.
+        except Exception:  # noqa: BLE001
             _LOG.exception("unhandled error while serving a request")
             response = PlainTextResponse("Internal Server Error", status_code=500)
         return _with_headers(response)
