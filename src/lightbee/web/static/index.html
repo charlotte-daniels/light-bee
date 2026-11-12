@@ -98,6 +98,11 @@
 
     <section id="panel-causes" role="tabpanel" aria-labelledby="tab-causes" class="mode" hidden>
       <div class="toolbar">
+        <div class="check">
+          <input type="checkbox" id="ghost-years" aria-describedby="ghost-years-hint">
+          <label for="ghost-years">Ghost years</label>
+          <span class="hint" id="ghost-years-hint">The same week 1 year ago (orange circles) and 2 years ago (purple diamonds), beneath the light curve</span>
+        </div>
         <button type="button" class="secondary" id="export-causes" disabled>Download PNG</button>
       </div>
       <p class="hint" id="scan-hint">Drag a box on the light curve or on VisMag v Time to list every GEO object within the screening distance at each selected time, or choose a time range here.</p>

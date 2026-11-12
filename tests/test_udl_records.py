@@ -245,6 +245,18 @@ def test_absent_drag_terms_are_zero_and_an_absent_period_is_derived() -> None:
     assert item.period == pytest.approx(1440.0 / 1.0027)
 
 
+@pytest.mark.parametrize("mean_motion", [5e-324, 1e-300, 1e-9])
+def test_a_derived_period_is_bounded_like_a_supplied_one(mean_motion: float) -> None:
+    record = elset_record(43874, WHEN, meanMotion=mean_motion)
+    del record["period"]
+    # 1440 / 5e-324 is infinite and 1440 / 1e-9 is over the 1e6 minute bound.
+    assert elset_or_problem(record) == "period"
+    record["period"] = 1436.0
+    item = elset_or_problem(record)
+    assert isinstance(item, Elset)
+    assert item.period == 1436.0
+
+
 def test_refused_markings_are_counted_under_short_safe_labels() -> None:
     tally = Tally()
     for marking in ("S", "S", None, 7, "  ", "U//X\x00\x1b[31m" + "y" * 100):

@@ -64,6 +64,24 @@ await page.getByRole('tab', { name: 'Other Causes' }).click();
 await page.waitForSelector('#plot-causes .main-svg');
 await page.screenshot({ path: `${out}/causes.png`, fullPage: true });
 
+// Ghost years: off by default, switched on from the keyboard, named in the title and summary.
+const ghostLegend = async () => page.locator('#plot-causes .legendtext', { hasText: 'year ago' }).count()
+  + await page.locator('#plot-causes .legendtext', { hasText: 'years ago' }).count();
+check(!(await page.isChecked('#ghost-years')), 'ghost years are off by default');
+check(await ghostLegend() === 0, 'no ghost-year traces are drawn while off');
+check((await page.textContent('#plot-causes')).includes('Light curve over SEPA'), 'the light curve panel is titled without ghost years');
+await page.focus('#ghost-years');
+await page.keyboard.press('Space');
+await page.waitForFunction(() => document.querySelector('#plot-causes').textContent.includes('years ago beneath'));
+check(await page.isChecked('#ghost-years'), 'the ghost years checkbox works from the keyboard');
+check(await ghostLegend() === 2, 'both ghost years appear in the legend ("1 year ago", "2 years ago")');
+check((await page.textContent('#causes-summary')).includes('1 year ago'), 'the text summary names the ghost years');
+await page.screenshot({ path: `${out}/causes-ghosts.png`, fullPage: true });
+const ghostFile = page.waitForEvent('download');
+await page.click('#export-causes');
+await (await ghostFile).saveAs(`${out}/export-causes-ghosts.png`);
+check(true, 'the Other Causes export runs with ghost years on');
+
 // Drag a box across the VisMag v Time panel (the second subplot).
 const target = page.locator('#plot-causes .nsewdrag[data-subplot="x2y2"]');
 await target.scrollIntoViewIfNeeded();
@@ -112,6 +130,10 @@ await page.getByLabel('Absolute').check();
 await page.waitForTimeout(1500);
 check((await page.textContent('#plot-causes')).includes('raw magnitude'), 'the absolute toggle redraws Other Causes with raw magnitude');
 check(!(await page.textContent('#plot-seasonal')).includes('range-normalised'), 'and redraws Seasonal Behaviour? on raw magnitude');
+check(await ghostLegend() === 2, 'ghost years stay on across the magnitude toggle');
+await page.uncheck('#ghost-years');
+await page.waitForFunction(() => !document.querySelector('#plot-causes').textContent.includes('years ago beneath'));
+check(await ghostLegend() === 0, 'switching ghost years off removes them');
 
 const cdp = await context.newCDPSession(page);
 await cdp.send('Performance.enable');

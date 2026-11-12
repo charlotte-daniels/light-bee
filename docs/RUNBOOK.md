@@ -14,7 +14,8 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 | Container budget | 2Gi memory, 2 CPU (measured: about 350 MB for one dense 2-year object; the cache is held to 900 MB across sessions) |
 | Port | `PORT`, default 8080, bound to 0.0.0.0; never set `PORT` in the Environment Variables tab |
 | Environment Variables tab | empty: every setting has a safe code default (`src/lightbee/config.py`) |
-| Health | `/`, `/healthz`, `/livez`, `/readyz`, `/ping` answer 200 unauthenticated; `/readyz` reports the version |
+| Health | `/`, `/healthz`, `/livez`, `/readyz`, `/ping` answer 200 unauthenticated (`/` to `HEAD` as well); `/readyz` reports the version, the process start (`started_unix`), `uptime_seconds` and `peak_memory_mb`, so a restart shows over HTTP |
+| Logging | every line one JSON object on standard output (App Store standard: `timestamp`, `severity_text`, `severity_number`, `body`, `attributes`); request lines carry `http.request.header.x-request-id` and `user.email`; nothing on standard error |
 | Workers | one uvicorn worker (sessions live in process memory) |
 | Add-ons | none: nothing is stored, so no database or persistent volume |
 | `securityContext.fsGroup` | not applicable: no volume is mounted and the app writes nothing to disk |
@@ -34,7 +35,7 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 
 1. The app shows Healthy; `GET /` and `/healthz` return 200; `/readyz` reports the deployed version.
 2. Charlie signs in with his UDL login and runs 43874 end to end: the flag appears within 3 minutes, Other Causes draws, a drag-select scan lists neighbours, both PNG exports carry the marking, banner and footer.
-3. The JSON audit lines (`lightbee.audit`) show the run and scan, with no username or credentials.
+3. The platform's logging check passes with no warnings, and the audit lines (`body` "run done" and "scan", `code.namespace` `lightbee.audit`) show the run and scan with the request ID and the analyst's email, and no UDL username or credentials.
 4. Keep the uploaded archive as the rollback.
 
 ## Roll back
@@ -56,7 +57,8 @@ Diagnose from the raw log before changing anything; never retry a real failure.
 | green, but the browser gets 401 | the platform's single sign-on gateway in front of the app | if `/healthz` also 401s, it is the gateway: raise with the platform team |
 | runs fail with "did not accept your credentials" | the analyst's UDL login | the analyst checks their UDL account |
 | runs fail with "The UDL read failed" | UDL outage, rate limit or a changed field | the message names the stage; re-run `tools/live_check.py` |
-| a run fails with "Request failed (503)" and a refresh shows the sign-in screen | the container was restarted, most often killed at its memory limit during the full-history read; a new app record starts at 128Mi memory and 200m CPU | Configuration tab: set 2Gi memory and 2 CPU (the release table above), apply, run again; a 503 with no Light Bee message always comes from the platform, not the app |
+| a run fails with "Request failed (503)" and a refresh shows the sign-in screen | the container was restarted, most often killed at its memory limit during the full-history read; a new app record starts at 128Mi memory and 200m CPU | confirm on `/readyz`: a `started_unix` later than before the run means a restart, and `peak_memory_mb` near the limit before it points at memory. Configuration tab: set 2Gi memory and 2 CPU (the release table above), apply, run again; a 503 with no Light Bee message always comes from the platform, not the app |
+| the logging check warns or fails | a line not in the standard shape, or something on standard error | run the server locally and check every line parses as JSON with the five fields (`tests/test_logs.py` is the reference); uvicorn must start through `python -m lightbee`, which passes the JSON log configuration |
 
 ## Operational limits
 

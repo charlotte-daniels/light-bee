@@ -28,6 +28,7 @@ from typing import Final
 
 import package_appstore
 import secret_patterns
+import sonar_rules
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 
@@ -399,6 +400,47 @@ def markers(root: Path) -> list[str]:
     return problems
 
 
+def _each(root: Path, suffixes: tuple[str, ...]) -> Iterator[tuple[Path, str]]:
+    for path in _analysed(root):
+        if path.suffix in suffixes:
+            yield path.relative_to(root), path.read_text(encoding="utf-8")
+
+
+def sonar_python(root: Path) -> list[str]:
+    """python:S1192, S5886, S7632 and S1244 (first upload, 12 November 2026)."""
+    return [
+        problem
+        for where, text in _each(root, (".py",))
+        for problem in sonar_rules.python_problems(where, text)
+    ]
+
+
+def sonar_dockerfile(root: Path) -> list[str]:
+    """container:S7020: no Dockerfile line over the length SonarQube flags."""
+    path = root / "Dockerfile"
+    if not path.is_file():
+        return ["no Dockerfile at the root"]
+    return sonar_rules.dockerfile_problems(Path("Dockerfile"), path.read_text(encoding="utf-8"))
+
+
+def sonar_javascript(root: Path) -> list[str]:
+    """javascript:S7785, S6582 and S7773 in the page's own scripts."""
+    return [
+        problem
+        for where, text in _each(root, (".js", ".mjs"))
+        for problem in sonar_rules.javascript_problems(where, text)
+    ]
+
+
+def sonar_html(root: Path) -> list[str]:
+    """Web:S6819: no ARIA role where a native element would do."""
+    return [
+        problem
+        for where, text in _each(root, (".html",))
+        for problem in sonar_rules.html_problems(where, text)
+    ]
+
+
 GATES: Final[dict[str, Callable[[Path], list[str]]]] = {
     "complexity": complexity,
     "duplication": duplication,
@@ -407,6 +449,10 @@ GATES: Final[dict[str, Callable[[Path], list[str]]]] = {
     "dockerfile": dockerfile,
     "secrets": secrets,
     "markers": markers,
+    "sonar_python": sonar_python,
+    "sonar_dockerfile": sonar_dockerfile,
+    "sonar_javascript": sonar_javascript,
+    "sonar_html": sonar_html,
 }
 
 

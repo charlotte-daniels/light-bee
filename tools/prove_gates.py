@@ -87,6 +87,24 @@ LEGITIMATE: Final = (
 )
 _PLANTED_MARKER: Final = "# TO" + "DO: finish this\n"
 _FINAL_WORKDIR: Final = "\nWORKDIR /app\nUSER"
+_S1192: Final = (
+    '_A = {"css": "text/javascript; charset=utf-8"}\n'
+    '_B = {"js": "text/javascript; charset=utf-8"}\n'
+    '_C = {"mjs": "text/javascript; charset=utf-8"}\n'
+)
+_S5886: Final = (
+    "from dataclasses import dataclass, replace\n\n\n@dataclass\nclass S:\n    a: int\n\n\n"
+    "def bump(s: S) -> S:\n    return replace(s, a=1)\n"
+)
+_S7632: Final = (
+    "def f() -> None:\n    try:\n        pass\n"
+    "    except Exception:  # noqa: BLE001 - last resort\n        pass\n"
+)
+_S7785: Final = "async function init() { return 1; }\n\ninit();\n"
+_S6582: Final = "export function f(point) {\n  return point && point.customdata;\n}\n"
+_S7773: Final = "export function f(value) {\n  return value ? 1 : NaN;\n}\n"
+_S6819_STATUS: Final = '<p id="progress" role="status" aria-live="polite"></p>\n'
+_S6819_IMG: Final = '<div id="plot" role="img" aria-label="figure"></div>\n'
 _PLANTED_HTML_MARKER: Final = "<!-- to" + "do: tidy -->\n"
 
 
@@ -103,7 +121,8 @@ def _deep_function() -> str:
 
 
 def _duplicated_block() -> str:
-    body = "\n".join(f"    total_{n} = value * {n} + offset" for n in range(80))
+    # Long enough to stay over 3% of src as it grows (about 5% of 6,000 lines).
+    body = "\n".join(f"    total_{n} = value * {n} + offset" for n in range(160))
     return f"def block(value, offset):\n{body}\n    return value\n"
 
 
@@ -488,7 +507,97 @@ PLANTS: Final = (
         "a work marker in source",
         lambda r: _write(r, "src/lightbee/planted.py", _PLANTED_MARKER),
     ),
+    # The SonarQube rules that failed the first upload, each as it was written then.
+    Plant(
+        "sonar_python",
+        "S1192 a media type written three times",
+        lambda r: _write(r, "src/lightbee/planted.py", _S1192),
+    ),
+    Plant(
+        "sonar_python",
+        "S5886 an annotated function returning dataclasses.replace",
+        lambda r: _write(r, "src/lightbee/planted.py", _S5886),
+    ),
+    Plant(
+        "sonar_python",
+        "S7632 a noqa comment with text after its code",
+        lambda r: _write(r, "src/lightbee/planted.py", _S7632),
+    ),
+    Plant(
+        "sonar_python",
+        "S1244 equality against a float literal",
+        lambda r: _write(
+            r, "src/lightbee/planted.py", "def zero(x: float) -> bool:\n    return x == 0.0\n"
+        ),
+    ),
+    Plant(
+        "sonar_dockerfile",
+        "S7020 a Dockerfile line of 150 characters",
+        lambda r: _replace(r, "Dockerfile", _FINAL_WORKDIR, "\n# " + "x" * 148 + _FINAL_WORKDIR),
+    ),
+    Plant(
+        "sonar_javascript",
+        "S7785 an async init called without await",
+        lambda r: _write(r, "src/lightbee/web/static/planted.mjs", _S7785),
+    ),
+    Plant(
+        "sonar_javascript",
+        "S6582 a guard instead of optional chaining",
+        lambda r: _write(r, "src/lightbee/web/static/planted.mjs", _S6582),
+    ),
+    Plant(
+        "sonar_javascript",
+        "S7773 the global NaN",
+        lambda r: _write(r, "src/lightbee/web/static/planted.mjs", _S7773),
+    ),
+    Plant(
+        "sonar_html",
+        "S6819 role=status on a paragraph",
+        lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6819_STATUS),
+    ),
+    Plant(
+        "sonar_html",
+        "S6819 role=img on a plot container",
+        lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6819_IMG),
+    ),
 )
+
+# Code each SonarQube model must pass: the shapes SonarQube passed on the
+# second upload, and near misses of each rule.
+LEGITIMATE_SONAR: Final = {
+    "src/lightbee/legit_sonar.py": (
+        "import fastapi\n\nrouter = fastapi.APIRouter()\n\n\n"
+        '@router.get("/session")\n'
+        "def a() -> None: ...\n\n\n"
+        '@router.post("/session")\n'
+        "def b() -> None: ...\n\n\n"
+        '@router.delete("/session")\n'
+        "def c() -> None: ...\n\n\n"
+        "def kinds() -> list[str]:\n"
+        '    return ["scatter", "scatter", "scatter"]\n\n\n'
+        "def escape(text: str) -> str:\n"
+        '    return text.replace("<", "&lt;")\n\n\n'
+        "def zero(x: float) -> bool:\n"
+        "    return x <= 0.0 or x == 0\n\n\n"
+        "def guarded() -> None:\n"
+        "    try:\n"
+        "        pass\n"
+        "    except Exception:  # noqa: BLE001\n"
+        "        pass\n"
+    ),
+    "src/lightbee/web/static/legit.mjs": (
+        "// NaN and isNaN in a comment, and in a string, are not code.\n"
+        "const note = 'or NaN';\n"
+        "export function f(point) { return point?.customdata ?? Number.NaN; }\n"
+        "export const g = (a, b) => a && b.c;\n"
+        "async function init() { return note; }\n"
+        "await init();\n"
+    ),
+    "src/lightbee/web/static/legit.html": (
+        '<p role="alert"></p>\n<div role="tablist"><button role="tab"></button></div>\n'
+        '<section role="tabpanel"></section>\n<output aria-live="polite"></output>\n'
+    ),
+}
 
 _BASE_ARCHIVE: Final = ("Dockerfile", "src/a.py", "tests/t.py", "sonar-project.properties")
 
@@ -562,6 +671,21 @@ def _detector_failures() -> list[str]:
     return failures
 
 
+SONAR_GATES: Final = ("sonar_python", "sonar_javascript", "sonar_html")
+
+
+def _sonar_false_positives(destination: Path) -> list[str]:
+    """Every SonarQube model must pass the code SonarQube itself passed."""
+    legit = _copy(destination)
+    for relative, text in LEGITIMATE_SONAR.items():
+        _write(legit, relative, text)
+    return [
+        f"{name} flagged legitimate code: {problems}"
+        for name, problems in gates.run(list(SONAR_GATES), legit).items()
+        if problems
+    ]
+
+
 def prove() -> list[str]:
     """Return every way the gates failed to behave. Empty means every gate bites."""
     failures: list[str] = []
@@ -581,6 +705,7 @@ def prove() -> list[str]:
         false_positives = gates.run(["secrets"], legit)["secrets"]
         if false_positives:
             failures.append(f"secrets flagged legitimate code: {false_positives}")
+        failures.extend(_sonar_false_positives(Path(scratch) / "legitimate-sonar"))
     for description, names in ARCHIVE_CASES:
         if not package_appstore.problems_in(names):
             failures.append(f"the packager did NOT reject {description}")
@@ -590,7 +715,11 @@ def prove() -> list[str]:
 def main() -> int:
     failures = prove()
     total = (
-        len(PLANTS) + len(ARCHIVE_CASES) + len(secret_cases.MUST_FIRE) + len(secret_cases.MUST_PASS)
+        len(PLANTS)
+        + len(ARCHIVE_CASES)
+        + len(secret_cases.MUST_FIRE)
+        + len(secret_cases.MUST_PASS)
+        + len(SONAR_GATES)
     )
     for failure in failures:
         print(f"FAIL  {failure}")

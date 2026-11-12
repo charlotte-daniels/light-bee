@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import time
 from datetime import UTC, date, datetime
 from typing import Any
@@ -284,7 +285,7 @@ def test_dense_photometry_is_drawn_within_each_panels_marker_budget() -> None:
     light = Series.from_arrays(epoch, 12 + np.sin(epoch / 1e7), np.linspace(-100, 100, count))
     caption = Caption("UNCLASSIFIED", 1, "w", "s", NOW)
     inputs = causes.CausesInputs(light, light, None, [], (end - 7 * DAY_MS, end), 150.0)
-    figure = causes.causes_figure(inputs, caption)
+    figure = causes.causes_figure(inputs, caption, ghosts=True)
 
     def drawn(group: str) -> int:
         return sum(len(t["x"]) for t in figure["data"] if t.get("legendgroup") == group)
@@ -298,6 +299,58 @@ def test_dense_photometry_is_drawn_within_each_panels_marker_budget() -> None:
     )
     recent = seasonal.seasonal_figure(light, None, None, caption, end)["data"][0]
     assert len(recent["x"]) <= seasonal.RECENT_POINTS
+
+
+def test_ghost_years_are_an_overlay_off_by_default_in_two_distinct_styles() -> None:
+    from lightbee.analysis.series import DAY_MS, Series
+    from lightbee.figures import causes
+
+    end = int(NOW.timestamp() * 1000)
+    count = 3 * 365 * 24
+    epoch = np.sort(end - np.arange(count, dtype=np.int64) * (DAY_MS // 24))
+    history = Series.from_arrays(epoch, 12 + np.sin(epoch / 1e7), np.linspace(-100, 100, count))
+    caption = Caption("UNCLASSIFIED", 1, "w", "s", NOW)
+    window = (end - 7 * DAY_MS, end)
+
+    def figure(ghosts: bool, past: Series | None = history) -> dict[str, Any]:
+        inputs = causes.CausesInputs(history, past, None, [], window, 150.0)
+        return causes.causes_figure(inputs, caption, ghosts=ghosts)
+
+    def light_title(drawn: dict[str, Any]) -> str:
+        return next(
+            a["text"]
+            for a in drawn["layout"]["annotations"]
+            if a["text"].startswith("Light curve over SEPA")
+        )
+
+    off = figure(False)
+    assert not [t for t in off["data"] if t.get("legendgroup") == "ghost"]
+    assert light_title(off) == "Light curve over SEPA"
+    assert "faint" not in json.dumps(off["layout"])
+    assert "Beneath the light curve" not in off["summary"]
+    assert off["ghosts"] is False
+
+    on = figure(True)
+    ghosts = [t for t in on["data"] if t.get("legendgroup") == "ghost"]
+    assert [t["name"] for t in ghosts] == ["1 year ago", "2 years ago"]
+    # Beneath the recent days: drawn before every other trace.
+    assert on["data"][:2] == ghosts
+    colours = [t["marker"]["color"] for t in ghosts]
+    assert colours == list(causes.GHOST_COLOURS)
+    assert len(set(colours)) == 2
+    assert len({t["marker"]["symbol"] for t in ghosts}) == 2
+    assert not set(colours) & {causes.NEWEST, causes.day_colour(1), causes.day_colour(6)}
+    assert light_title(on) == "Light curve over SEPA, with the same week 1 and 2 years ago beneath"
+    assert "Beneath the light curve, the same week 1 year ago (" in on["summary"]
+    assert "2 years ago (" in on["summary"]
+
+    unread = figure(True, past=None)
+    assert "not read yet" in light_title(unread)
+    assert "not been read yet" in unread["summary"]
+    recent_only = Series.from_arrays(epoch[-24:], np.full(24, 12.0), np.zeros(24))
+    empty = figure(True, past=recent_only)
+    assert "no observations in this week of earlier years" in light_title(empty)
+    assert "no observations in this week" in empty["summary"]
 
 
 def test_history_is_split_into_the_flags_seasons_and_the_rest_with_no_gap_or_overlap() -> None:

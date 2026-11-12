@@ -17,14 +17,16 @@ Three platform rules, each of which cost a sister application a cycle:
 
 from __future__ import annotations
 
+import contextvars
 import logging
-import sys
+import resource
+import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import resources
-from typing import Final, TextIO
+from typing import Final
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.gzip import GZipMiddleware
@@ -32,6 +34,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from lightbee import __version__
 from lightbee.config import Settings
+from lightbee.logs import RequestContext, configure_logging
 from lightbee.udl.client import UdlReadClient
 from lightbee.web.api import Services, Submit, install
 from lightbee.web.guards import BodyLimit, RequestLimit
@@ -40,32 +43,13 @@ from lightbee.web.session import SessionStore
 
 _LOG: Final = logging.getLogger("lightbee.web")
 
-
-class AuditHandler(logging.StreamHandler[TextIO]):
-    """Writes audit lines to the process's current standard output, message only."""
-
-    def __init__(self) -> None:
-        super().__init__(sys.stdout)
-        self.setFormatter(logging.Formatter("%(message)s"))
-
-    def emit(self, record: logging.LogRecord) -> None:
-        # Whatever stdout is now (setStream would flush the old one, which may be closed).
-        self.stream = sys.stdout
-        super().emit(record)
+# When this module was first imported: the process start, near enough.
+PROCESS_STARTED: Final = time.time()
 
 
-def configure_audit_log() -> None:
-    """Make the audit lines reach the platform's log, whatever the server set up.
-
-    uvicorn configures only its own loggers, so without this the root's default
-    WARNING level would silently drop every INFO audit line. Safe to call twice.
-    """
-    audit = logging.getLogger("lightbee.audit")
-    audit.setLevel(logging.INFO)
-    if not any(isinstance(handler, AuditHandler) for handler in audit.handlers):
-        audit.addHandler(AuditHandler())
-    # Kept for tests and any root handler a developer adds; uvicorn adds none.
-    audit.propagate = True
+def peak_memory_mb() -> float:
+    """The process's peak resident memory in MB (Linux reports kibibytes)."""
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)
 
 
 # Background runs at once. Two analysts a day; four leaves room without letting
@@ -152,14 +136,25 @@ def _add_health_routes(app: FastAPI) -> None:
 
     @app.get("/readyz", include_in_schema=False)
     async def ready() -> JSONResponse:
-        return JSONResponse({"status": "ready", "version": __version__})
+        # Numbers only: a later start time, or a peak that has dropped, shows
+        # over HTTP that the container restarted.
+        return JSONResponse(
+            {
+                "status": "ready",
+                "version": __version__,
+                "started_unix": int(PROCESS_STARTED),
+                "uptime_seconds": int(time.time() - PROCESS_STARTED),
+                "peak_memory_mb": peak_memory_mb(),
+            }
+        )
 
 
 def _add_static_routes(app: FastAPI) -> None:
     index = _read_static("index.html")
     bodies = {key: _read_static(asset.filename) for key, asset in STATIC_ASSETS.items()}
 
-    @app.get("/", include_in_schema=False)
+    # HEAD as well as GET: a probe or uptime monitor may ask for headers only.
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     def root() -> Response:
         return Response(index, media_type="text/html; charset=utf-8")
 
@@ -179,7 +174,9 @@ def _default_submit() -> Submit:
     pool = ThreadPoolExecutor(max_workers=RUN_WORKERS, thread_name_prefix="lightbee-run")
 
     def submit(job: Callable[[], None]) -> None:
-        pool.submit(job)
+        # The job runs in the starting request's context, so its log lines
+        # carry that request's ID.
+        pool.submit(contextvars.copy_context().run, job)
 
     return submit
 
@@ -206,7 +203,7 @@ def create_app(
         # Location and downgrade it to http behind the TLS ingress.
         redirect_slashes=False,
     )
-    configure_audit_log()
+    configure_logging()
     app.state.settings = settings
     app.state.sessions = SessionStore(
         idle_hours=settings.session_hours, max_sessions=settings.max_sessions
@@ -216,6 +213,8 @@ def create_app(
     # Outermost last: oversized bodies and excess requests are refused first.
     app.add_middleware(RequestLimit, headers=_SECURITY_HEADERS, store=app.state.sessions)
     app.add_middleware(BodyLimit, headers=_SECURITY_HEADERS)
+    # Outermost of all, so even a refused request's lines carry its ID.
+    app.add_middleware(RequestContext)
     _add_health_routes(app)
     _add_static_routes(app)
     install(

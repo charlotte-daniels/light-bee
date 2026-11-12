@@ -314,11 +314,18 @@ def seasonal(
 
 @router.get("/runs/{run_id}/figures/causes")
 def causes(
-    run_id: str, session: Current, request: Request, basis: Basis = "normalised"
+    run_id: str,
+    session: Current,
+    request: Request,
+    basis: Basis = "normalised",
+    ghosts: bool = False,
 ) -> dict[str, Any]:
     run = _run_of(run_id, session)
     _result(run, "recent")
-    return causes_figure(_causes_inputs(run, basis), _caption(run, _services(request).clock()))
+    # Ghost years come from the history already in memory; nothing is re-read.
+    return causes_figure(
+        _causes_inputs(run, basis), _caption(run, _services(request).clock()), ghosts=ghosts
+    )
 
 
 @router.post("/runs/{run_id}/scan")

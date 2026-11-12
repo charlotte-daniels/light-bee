@@ -1,8 +1,8 @@
 """The Other Causes figure: light curve, VisMag v Time, orbit, close approaches.
 
 One figure, so one PNG carries the whole argument. The light curve sits on its
-own SEPA axis at the top with the same week of earlier years drawn faintly
-beneath it (ghost years); every panel below shares one time axis, so a step in
+own SEPA axis at the top; the analyst may switch on the same week of earlier
+years beneath it (ghost years, off by default); every panel below shares one time axis, so a step in
 brightness, a manoeuvre in the elements and a neighbour's approach line up.
 Every observation point carries its time, so a drag selection on either of the
 first two panels can be sent for a neighbourhood scan.
@@ -53,7 +53,14 @@ SENSOR_COLOURS: Final = (
 )
 # Neighbours get their own dashed palette, so none is mistaken for a sensor.
 NEIGHBOUR_COLOURS: Final = ("#ffffff", "#ffb3c1", "#b8f2e6", "#ffd6a5", "#cdb4db")
-GHOST_COLOURS: Final = ("rgba(200,200,200,0.55)", "rgba(160,160,160,0.45)")
+# Ghost years: Okabe-Ito orange (1 year ago) and reddish purple (2 years ago),
+# open markers in two shapes, so neither depends on colour alone. Both read on
+# black (contrast 9.3:1 and 6.9:1) and stay apart from each other and from the
+# day palette under simulated protanopia, deuteranopia and tritanopia (CIELAB
+# difference at least 16 from every day colour, 17 between the two).
+GHOST_COLOURS: Final = ("#e69f00", "#cc79a7")
+GHOST_SYMBOLS: Final = ("circle-open", "diamond-open")
+LIGHT_CURVE_TITLE: Final = "Light curve over SEPA"
 MAX_SENSORS: Final = len(SENSOR_COLOURS)
 MAX_APPROACH_TRACES: Final = 20
 LABELLED_APPROACHES: Final = 5
@@ -100,11 +107,15 @@ def day_colour(day: int, days: int = 7) -> str:
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 
-def causes_figure(inputs: CausesInputs, caption: Caption) -> dict[str, Any]:
+def causes_figure(
+    inputs: CausesInputs, caption: Caption, *, ghosts: bool = False
+) -> dict[str, Any]:
+    """The figure; `ghosts` draws the same week of earlier years beneath the light curve."""
     start, end = inputs.window
     traces: list[dict[str, Any]] = []
-    if inputs.history is not None:
-        traces += _ghost_traces(inputs.history, start, end)
+    history = inputs.history
+    shown = _ghost_traces(history, start, end) if ghosts and history is not None else []
+    traces += shown
     traces += _light_curve_traces(inputs.light, start, end)
     traces += _sensor_traces(inputs.light, start, end)
     if inputs.orbit is not None:
@@ -137,7 +148,8 @@ def causes_figure(inputs: CausesInputs, caption: Caption) -> dict[str, Any]:
             "Separation [km]", domain=list(ROWS["approach"]), range=[0, inputs.threshold_km * 4]
         ),
     )
-    figure_layout["annotations"] += _panel_titles() + _approach_labels(
+    light_title = _light_curve_title(ghosts, inputs.history is not None, shown)
+    figure_layout["annotations"] += _panel_titles(light_title) + _approach_labels(
         inputs.approaches, inputs.threshold_km, (start, end)
     )
     figure_layout["shapes"] += [
@@ -156,10 +168,38 @@ def causes_figure(inputs: CausesInputs, caption: Caption) -> dict[str, Any]:
             "layer": "below",
         }
     ]
-    return {"data": traces, "layout": figure_layout, "summary": summary(inputs, caption)}
+    return {
+        "data": traces,
+        "layout": figure_layout,
+        "summary": summary(inputs, caption, ghost_sentence(ghosts, inputs.history, shown)),
+        "ghosts": ghosts,
+    }
 
 
-def summary(inputs: CausesInputs, caption: Caption) -> str:
+def _light_curve_title(ghosts: bool, history_read: bool, shown: Sequence[dict[str, Any]]) -> str:
+    if not ghosts:
+        return LIGHT_CURVE_TITLE
+    if not history_read:
+        return f"{LIGHT_CURVE_TITLE} (earlier years not read yet)"
+    if not shown:
+        return f"{LIGHT_CURVE_TITLE} (no observations in this week of earlier years)"
+    years = " and ".join(str(trace["meta"]) for trace in shown)
+    return f"{LIGHT_CURVE_TITLE}, with the same week {years} years ago beneath"
+
+
+def ghost_sentence(ghosts: bool, history: Series | None, shown: Sequence[dict[str, Any]]) -> str:
+    """What the ghost years add to the figure, in words; nothing when they are off."""
+    if not ghosts:
+        return ""
+    if history is None:
+        return " Ghost years are on, but the earlier years have not been read yet."
+    if not shown:
+        return " Ghost years are on; there are no observations in this week of earlier years."
+    parts = [f"{trace['name']} ({len(trace['x']):,} points)" for trace in shown]
+    return f" Beneath the light curve, the same week {' and '.join(parts)}."
+
+
+def summary(inputs: CausesInputs, caption: Caption, ghosts: str = "") -> str:
     """The figure in words, for screen readers and for the page."""
     inside = [a for a in inputs.approaches if a.inside]
     text = (
@@ -178,12 +218,12 @@ def summary(inputs: CausesInputs, caption: Caption) -> str:
             f"{inputs.orbit.largest_step('period_min'):.3f} min, inclination "
             f"{inputs.orbit.largest_step('inclination_deg'):.3f}°."
         )
-    return text
+    return text + ghosts
 
 
-def _panel_titles() -> list[dict[str, Any]]:
+def _panel_titles(light_title: str) -> list[dict[str, Any]]:
     return [
-        panel_title("Light curve over SEPA (earlier years faint beneath)", "x", ROWS["light"][1]),
+        panel_title(light_title, "x", ROWS["light"][1]),
         panel_title("VisMag v Time by sensor", "x2", ROWS["time"][1]),
         panel_title("Period", "x3", ROWS["period"][1]),
         panel_title("Inclination", "x4", ROWS["inclination"][1]),
@@ -228,18 +268,27 @@ def _approach_labels(
 
 def _ghost_traces(history: Series, start: int, end: int) -> list[dict[str, Any]]:
     traces = []
+    # Drawn first, so every recent day sits on top of them.
     for ghost in ghost_years(history, start_ms=start, end_ms=end):
         keep = thin(ghost.sepa.size, GHOST_POINTS)
+        style = min(ghost.years_ago, len(GHOST_COLOURS)) - 1
         traces.append(
             {
                 "type": "scatter",
                 "mode": "markers",
                 "name": f"{ghost.years_ago} year{'s' if ghost.years_ago > 1 else ''} ago",
+                "meta": ghost.years_ago,
                 "x": rounded(ghost.sepa[keep], 2),
                 "y": rounded(ghost.mag[keep], 3),
                 "xaxis": "x",
                 "yaxis": "y",
-                "marker": {"size": 4, "color": GHOST_COLOURS[min(ghost.years_ago, 2) - 1]},
+                "marker": {
+                    "size": 6,
+                    "symbol": GHOST_SYMBOLS[style],
+                    "color": GHOST_COLOURS[style],
+                    "opacity": 0.8,
+                    "line": {"width": 1.2, "color": GHOST_COLOURS[style]},
+                },
                 "hoverinfo": "skip",
                 "legendgroup": "ghost",
                 "legendgrouptitle": {"text": "Same week, earlier years"},

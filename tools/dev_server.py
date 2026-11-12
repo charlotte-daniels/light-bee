@@ -10,7 +10,6 @@ fake world's test username and password.
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lightbee.analysis.series import DAY_MS
 from lightbee.config import Settings
+from lightbee.logs import LOG_CONFIG
 from lightbee.udl.photometry import Photometry
 from lightbee.udl.records import Tally
 from lightbee.web import runs
@@ -82,13 +82,11 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--per-night", type=int, default=1500)
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO)
     if args.dense_history:
         synthesise(args.per_night)
     app = create_app(Settings(), client_factory=factory(world(dense=args.dense)), clock=lambda: NOW)
-    # The root logger set up above already prints audit lines; print them once.
-    logging.getLogger("lightbee.audit").propagate = False
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    # The container's logging: every line one JSON object on stdout.
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_config=LOG_CONFIG)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 // Light Bee page behaviour. Every value from the server is written with
 // textContent or as Plotly data, never as HTML.
 import {
-  checkRunInputs, exportName, latestTime, neighbourStatus, progressText, scanCsv, selectionTimes,
+  causesQuery, checkRunInputs, exportName, latestTime, neighbourStatus, progressText, scanCsv, selectionTimes,
   timesInRange, todayUtc, utc, utcInput, utcInputValue,
 } from './logic.mjs';
 
@@ -263,8 +263,15 @@ async function drawFlag() {
   $('flag').hidden = false;
 }
 
+// Each Other Causes request is numbered, so a slow reply to an earlier toggle
+// never draws over a newer one.
+let causesRequest = 0;
+
 async function drawCauses() {
-  const figure = await api(runPath(`/figures/causes?basis=${encodeURIComponent(basis())}`));
+  causesRequest += 1;
+  const mine = causesRequest;
+  const figure = await api(runPath(causesQuery(basis(), $('ghost-years').checked)));
+  if (mine !== causesRequest) return;
   const plot = $('plot-causes');
   await draw('plot-causes', figure);
   $('causes-summary').textContent = figure.summary || '';
@@ -442,6 +449,17 @@ async function basisChanged() {
   }
 }
 
+// Ghost years are redrawn from the history the run already holds; the UDL is
+// not read again. The choice stays for every later draw and run.
+async function ghostsChanged() {
+  if (!state.run || !state.drawn.has('done')) return;
+  try {
+    await drawCauses();
+  } catch (error) {
+    $('progress').textContent = error.message;
+  }
+}
+
 window.addEventListener('resize', () => {
   const plot = $('plot-causes');
   if (plot.layout && !plot.closest('[hidden]')) Plotly.relayout(plot, { width: width() });
@@ -465,6 +483,7 @@ async function init() {
   for (const radio of document.querySelectorAll('input[name="basis"]')) {
     radio.addEventListener('change', basisChanged);
   }
+  $('ghost-years').addEventListener('change', ghostsChanged);
   try {
     const session = await api('/api/session');
     setToday(session.today);

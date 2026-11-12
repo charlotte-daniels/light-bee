@@ -107,7 +107,7 @@ def test_wrong_credentials_and_missing_headers_are_refused(fake: FakeUdl) -> Non
 
 
 def test_a_full_run_produces_both_figures_the_flag_and_markings(
-    finished: tuple[TestClient, str],
+    finished: tuple[TestClient, str], fake: FakeUdl
 ) -> None:
     client, run_id = finished
     state = client.get(f"/api/runs/{run_id}").json()
@@ -126,6 +126,19 @@ def test_a_full_run_produces_both_figures_the_flag_and_markings(
     assert any(name.startswith("NORAD ") for name in names)
     raw = client.get(f"/api/runs/{run_id}/figures/causes?basis=raw").json()
     assert "raw magnitude" in json.dumps(raw["layout"]["annotations"])
+    # Ghost years: off unless asked for, then drawn from the history in memory.
+    assert "1 year ago" not in names
+    assert causes["ghosts"] is False
+    calls = len(fake.requests)
+    ghosts = client.get(f"/api/runs/{run_id}/figures/causes?ghosts=true&basis=raw").json()
+    assert len(fake.requests) == calls  # nothing re-read from the UDL
+    ghost_names = [t["name"] for t in ghosts["data"] if t.get("legendgroup") == "ghost"]
+    assert ghost_names == ["1 year ago", "2 years ago"]
+    assert ghosts["ghosts"] is True
+    assert "years ago beneath" in json.dumps(ghosts["layout"]["annotations"])
+    assert "raw magnitude" in json.dumps(ghosts["layout"]["annotations"])
+    assert "Beneath the light curve, the same week 1 year ago" in ghosts["summary"]
+    assert client.get(f"/api/runs/{run_id}/figures/causes?ghosts=maybe").status_code == 422
     flag = client.get(f"/api/runs/{run_id}/flag").json()
     assert flag["outcome"] in {"consistent", "marginal", "offset", "departs", "inconclusive"}
     assert flag["comparable_bins"] == len(flag["bins"]["sepa_centre"])
@@ -301,9 +314,9 @@ def test_credentials_never_appear_in_a_response_or_a_log(
         )
     text = "\n".join(bodies) + "\n".join(r.getMessage() for r in caplog.records)
     assert PASSWORD not in text
-    audit = [json.loads(r.getMessage()) for r in caplog.records if r.name == "lightbee.audit"]
-    assert audit[-1]["event"] == "run"
-    assert audit[-1]["outcome"] == "done"
+    audit = [r.__dict__["attributes"] for r in caplog.records if r.name == "lightbee.audit"]
+    assert audit[-1]["event.name"] == "lightbee.run"
+    assert audit[-1]["lightbee.outcome"] == "done"
     assert USERNAME not in json.dumps(audit)
 
 
@@ -611,7 +624,10 @@ def test_no_credential_form_leaks_on_any_path(
     text = "\n".join(texts) + "\n".join(r.getMessage() for r in caplog.records)
     for secret in (PASSWORD, token, token[:16]):
         assert secret not in text
-    audit = [r.getMessage() for r in caplog.records if r.name == "lightbee.audit"]
+    audit = [
+        json.dumps(r.__dict__["attributes"]) for r in caplog.records if r.name == "lightbee.audit"
+    ]
+    assert audit
     assert all(USERNAME not in line for line in audit)
 
 

@@ -135,6 +135,12 @@ export function latestTime(traces) {
   return latest;
 }
 
+/** The Other Causes figure path for a magnitude basis, with ghost years on or off. */
+export function causesQuery(basis, ghosts) {
+  const safeBasis = basis === 'raw' ? 'raw' : 'normalised';
+  return `/figures/causes?basis=${safeBasis}&ghosts=${ghosts === true}`;
+}
+
 /** A file-name-safe stem for exports. */
 export function exportName(satNo, mode, changeDate) {
   const safeMode = String(mode).replace(/[^a-z-]/gi, '').toLowerCase();

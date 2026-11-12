@@ -20,7 +20,6 @@ data that does not fit the question asked.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
 import time
@@ -574,27 +573,27 @@ def markings(data: RunData | None) -> str:
 
 
 def _audit(run: Run, outcome: str) -> None:
-    """One JSON line per run: who (hashed), what, how much, how long. Never credentials."""
+    """One line per run: who (hashed), what, how much, how long. Never credentials."""
     data = run.data
     photometry = data.photometry.tally.as_dict() if data and data.photometry else {}
     AUDIT.info(
-        json.dumps(
-            {
-                "event": "run",
-                "outcome": outcome,
-                "session": run.session_audit_id,
-                "sat_no": run.request.sat_no,
-                "change_date": run.request.change_date.isoformat(),
-                "window_days": run.request.window_days,
-                "provider": run.request.provider,
-                "warm": run.warm,
-                "photometry": photometry,
-                "elsets": data.elsets.tally.kept if data and data.elsets else 0,
-                "catalogue": len(data.catalogue) if data else 0,
-                "seconds": round(time.monotonic() - run.started, 1),
-            },
-            sort_keys=True,
-        )
+        f"run {outcome}",
+        extra={
+            "attributes": {
+                "event.name": "lightbee.run",
+                "lightbee.outcome": outcome,
+                "lightbee.session": run.session_audit_id,
+                "lightbee.sat_no": run.request.sat_no,
+                "lightbee.change_date": run.request.change_date.isoformat(),
+                "lightbee.window_days": run.request.window_days,
+                "lightbee.provider": run.request.provider,
+                "lightbee.warm": run.warm,
+                "lightbee.photometry": photometry,
+                "lightbee.elsets": data.elsets.tally.kept if data and data.elsets else 0,
+                "lightbee.catalogue": len(data.catalogue) if data else 0,
+                "lightbee.seconds": round(time.monotonic() - run.started, 1),
+            }
+        },
     )
 
 
@@ -602,15 +601,15 @@ def audit_scan(
     session_audit_id: str, run: Run, times: int, neighbours: int, seconds: float
 ) -> None:
     AUDIT.info(
-        json.dumps(
-            {
-                "event": "scan",
-                "session": session_audit_id,
-                "sat_no": run.request.sat_no,
-                "times": times,
-                "neighbours": neighbours,
-                "seconds": round(seconds, 2),
-            },
-            sort_keys=True,
-        )
+        "scan",
+        extra={
+            "attributes": {
+                "event.name": "lightbee.scan",
+                "lightbee.session": session_audit_id,
+                "lightbee.sat_no": run.request.sat_no,
+                "lightbee.times": times,
+                "lightbee.neighbours": neighbours,
+                "lightbee.seconds": round(seconds, 2),
+            }
+        },
     )

@@ -328,9 +328,10 @@ def elset_or_problem(record: dict[str, Any], sat_no: int | None = None) -> Elset
     if elements[0] <= 0.0:  # bounded to 0 to 20 above, so this means exactly zero
         return "meanMotion"
     raw_period = record.get("period")
-    period = (
-        MINUTES_PER_DAY / elements[0] if raw_period is None else bounded(raw_period, (0.0, 1e6))
-    )
+    # A derived period is bounded like a supplied one: a vanishing but positive
+    # mean motion (5e-324) would otherwise give an infinite period.
+    derived = MINUTES_PER_DAY / elements[0] if raw_period is None else raw_period
+    period = bounded(derived, (0.0, 1e6))
     if math.isnan(period):
         return "period"
     sat_no, epoch, source = header

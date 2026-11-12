@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkRunInputs, csvSafe, exportName, formatSeconds, latestTime, neighbourStatus, progressText, scanCsv,
+  causesQuery, checkRunInputs, csvSafe, exportName, formatSeconds, latestTime, neighbourStatus, progressText, scanCsv,
   selectionTimes, timesInRange, todayUtc, utc, utcInput, utcInputValue,
 } from '../../src/lightbee/web/static/logic.mjs';
 
@@ -81,4 +81,11 @@ test('neighbours are described against the threshold and exports get safe names'
   assert.equal(neighbourStatus({ inside: false, borderline: false }), 'Outside');
   assert.equal(exportName(43874, 'other-causes', '2026-11-10'), 'lightbee-43874-other-causes-2026-11-10');
   assert.equal(exportName('1;rm', '../x', '2026/11/10<'), 'lightbee-NaN-x-20261110');
+});
+
+test('the Other Causes path carries the basis and the ghost years choice, nothing else', () => {
+  assert.equal(causesQuery('normalised', false), '/figures/causes?basis=normalised&ghosts=false');
+  assert.equal(causesQuery('raw', true), '/figures/causes?basis=raw&ghosts=true');
+  assert.equal(causesQuery('raw&x=1', 'true'), '/figures/causes?basis=normalised&ghosts=false');
+  assert.equal(causesQuery(undefined, 1), '/figures/causes?basis=normalised&ghosts=false');
 });

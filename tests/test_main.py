@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from lightbee.__main__ import DEFAULT_HOST, DEFAULT_PORT, main, server_options
+from lightbee.logs import LOG_CONFIG, StdoutHandler
 
 
 def test_defaults_are_port_8080_on_loopback() -> None:
@@ -24,8 +25,9 @@ def test_the_platform_port_and_container_host_are_honoured() -> None:
 
 @pytest.mark.parametrize("value", ["0", "65536", "eighty", "-1", "80.5", "\u00b2", "9" * 5000])
 def test_an_invalid_port_stops_the_boot(value: str) -> None:
-    with pytest.raises(SystemExit, match="PORT"):
+    with pytest.raises(SystemExit) as stopped:
         server_options({"PORT": value})
+    assert stopped.value.code == 2
 
 
 def test_main_runs_the_asgi_app_with_those_options() -> None:
@@ -45,6 +47,7 @@ def test_main_runs_the_asgi_app_with_those_options() -> None:
                 "access_log": False,
                 "timeout_graceful_shutdown": 30,
                 "server_header": False,
+                "log_config": LOG_CONFIG,
             },
         )
     ]
@@ -68,6 +71,8 @@ def test_audit_lines_reach_standard_output_under_the_real_server_logging(
     create_app(Settings())  # safe to build twice: still one handler
     uvicorn.Config("asgi:app", **server_options({}))
     audit = logging.getLogger("lightbee.audit")
-    audit.info('{"event": "run"}')
-    assert capsys.readouterr().out.count('{"event": "run"}') == 1
-    assert sum(type(h).__name__ == "AuditHandler" for h in audit.handlers) == 1
+    audit.info("run done")
+    out, err = capsys.readouterr()
+    assert out.count('"body":"run done"') == 1
+    assert err == ""
+    assert sum(isinstance(h, StdoutHandler) for h in logging.getLogger().handlers) == 1
