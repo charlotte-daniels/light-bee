@@ -19,7 +19,7 @@ How to deploy, check, roll back and triage Light Bee on the Bluestaq App Store. 
 | Workers | one uvicorn worker (sessions live in process memory) |
 | Add-ons | none: nothing is stored, so no database or persistent volume |
 | `securityContext.fsGroup` | not applicable: no volume is mounted and the app writes nothing to disk |
-| Base image | `python:3.12-alpine`, flattened `FROM scratch`, user 10001 (`docs/evidence/container-scan-1.0.0.md`) |
+| Base image | `python:3.12-alpine`, flattened `FROM scratch`, user 10001 (`docs/evidence/container-scan-1.1.0.md`; 1.0.0 in `container-scan-1.0.0.md`) |
 
 ## Deploy
 
