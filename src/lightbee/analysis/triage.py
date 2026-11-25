@@ -5,8 +5,10 @@ and it failed: the events last hours, and sensors disagree with each other by
 more than the events. So the board starts from the analyst's own approximate
 time and looks 24 hours before it and 48 after:
 
-* each sensor against itself the day before, at the same solar phase angle,
-  hour by hour, so one sensor's offset never passes for a change;
+* each sensor against itself over the 7 days ending 6 hours before the time,
+  at the same solar phase angle and always from another night, hour by hour,
+  so one sensor's offset never passes for a change and a change that began
+  hours before the analyst's time is dated to when it began;
 * the target's elset period steps against its own typical step over the
   30 days before;
 * every pass of every neighbour within reach;
@@ -36,21 +38,36 @@ HOUR_MS: Final = 3_600_000
 BEFORE_MS: Final = 24 * HOUR_MS
 AFTER_MS: Final = 48 * HOUR_MS
 HOURS: Final = (BEFORE_MS + AFTER_MS) // HOUR_MS
-# An observation is compared with the same sensor's observations the day
-# before within this many degrees of solar phase angle (SEPA): brightness
-# follows SEPA through every night, so this removes the nightly curve.
-SEPA_MATCH_DEG: Final = 3.0
-MATCH_MIN: Final = 3  # earlier observations needed for one comparison
-SIDE_MIN: Final = 10  # comparisons needed before, and after, to judge a sensor
-HOUR_MIN: Final = 3  # comparisons needed in an hour to judge that hour
-# An hour departs when its median is at least this far from the day before,
-# and at least DEPART_Z standard errors of that sensor's own scatter.
-SHIFT_FLOOR_MAG: Final = 0.1
-DEPART_Z: Final = 3.0
-MEDIAN_ERROR: Final = 1.2533  # the standard error of a median, in sigma per root n
-SCATTER_FLOOR_MAG: Final = 0.02
-# The analyst's time may be hours out: departures from this long before it count.
+# The analyst's time may be hours out: departures from this long before it
+# count, and the baseline ends this long before it, so an early start is seen.
 EARLY_MS: Final = 6 * HOUR_MS
+# Each sensor's baseline: its own 7 days ending EARLY_MS before the time, enough
+# nights to measure its night-to-night offsets (3 nights proved too few).
+BASELINE_MS: Final = 7 * 24 * HOUR_MS
+# An observation is compared with the same sensor's baseline observations
+# within this many degrees of solar phase angle (SEPA): brightness follows SEPA
+# through every night, so this removes the nightly curve. Observations from
+# its own night are left out, so every comparison is night to night.
+SEPA_MATCH_DEG: Final = 3.0
+OWN_NIGHT_MS: Final = 12 * HOUR_MS
+MATCH_MIN: Final = 3  # baseline observations needed for one comparison
+SIDE_MIN: Final = 10  # comparisons needed in the baseline, and after the time
+HOUR_MIN: Final = 3  # comparisons needed in an hour to judge that hour
+BASELINE_HOURS_MIN: Final = 6  # judged baseline hours needed to know the scatter
+# An hour departs when its median is at least this far from the baseline and
+# at least DEPART_Z times the baseline's own noise: the larger of its hourly
+# and its nightly spread, which carries the night-to-night offsets real
+# sensors have. Measured on about 7 nights that noise is itself uncertain, so
+# the multiplier is 4, not 3 (at 3, nightly offsets of 0.1 mag alone crossed
+# it in synthetic tests).
+SHIFT_FLOOR_MAG: Final = 0.1
+DEPART_Z: Final = 4.0
+NIGHTS_MIN: Final = 3  # baseline nights needed to measure the nightly spread
+# A change persists: one hour alone over the limit is noise, so a departure
+# needs this many consecutive departing hours (with nightly offsets of 0.03
+# mag, single hours crossed 0.1 mag in synthetic tests).
+SPAN_MIN_HOURS: Final = 2
+SCATTER_FLOOR_MAG: Final = 0.02
 MAX_SENSOR_ROWS: Final = 12
 ELSET_BASELINE_DAYS: Final = 30
 BASELINE_STEPS_MIN: Final = 10
@@ -64,6 +81,8 @@ TYPICAL_FLOOR_MIN: Final = 0.0001
 # One sensor cannot be checked against another.
 MIN_SENSORS: Final = 2
 LOOSE_ELSET_GAP_MS: Final = 12 * HOUR_MS
+# A step fits the timing when its elsets bracket a moment within this of the time.
+NEAR_STEP_MS: Final = 12 * HOUR_MS
 NEAR_PASS_MS: Final = 6 * HOUR_MS
 # A neighbour passing this many times in the 72 hours passes routinely.
 ROUTINE_PASSES: Final = 3
@@ -83,12 +102,12 @@ class Span:
 
 @dataclass(frozen=True)
 class SensorRow:
-    """One sensor against itself the day before, hour by hour."""
+    """One sensor against its own baseline, hour by hour."""
 
     name: str
-    before: int
-    after: int
-    scatter_mag: float | None  # None: too few comparisons the day before to judge
+    before: int  # comparisons in the baseline
+    after: int  # comparisons after the time
+    scatter_mag: float | None  # of the baseline's hourly medians; None: too few to judge
     shift_mag: float | None  # median departure after the time; None: too few
     hour_median: FloatArray  # (HOURS,), NaN where the hour cannot be judged
     hour_count: IntArray  # (HOURS,)
@@ -144,63 +163,100 @@ def strip(anchor_ms: int) -> tuple[int, int]:
     return anchor_ms - BEFORE_MS, anchor_ms + AFTER_MS
 
 
+def baseline(anchor_ms: int) -> tuple[int, int]:
+    """Each sensor's baseline: the 7 days ending EARLY_MS before the time."""
+    end = anchor_ms - EARLY_MS
+    return end - BASELINE_MS, end
+
+
 def sensor_rows(series: Series, anchor_ms: int) -> list[SensorRow]:
     """Every sensor that saw the object in the strip, the busiest first."""
     start, end = strip(anchor_ms)
-    part = series.between(start, end)
+    part = series.between(min(start, baseline(anchor_ms)[0]), end)
     part = part.take(np.isfinite(part.mag) & np.isfinite(part.sepa))
+    seen = part.sensor[(part.epoch_ms >= start) & (part.epoch_ms < end)]
     rows = [
         _sensor_row(name, part.take(part.sensor == index), anchor_ms)
         for index, name in enumerate(series.sensors)
-        if np.any(part.sensor == index)
+        if np.any(seen == index)
     ]
     rows.sort(key=lambda r: -(r.before + r.after))
     return rows[:MAX_SENSOR_ROWS]
 
 
 def _sensor_row(name: str, mine: Series, anchor_ms: int) -> SensorRow:
-    start, _ = strip(anchor_ms)
-    res = _residuals(mine, anchor_ms)
-    early = mine.epoch_ms < anchor_ms
+    start, end = strip(anchor_ms)
+    base_start, base_end = baseline(anchor_ms)
+    in_base = (mine.epoch_ms >= base_start) & (mine.epoch_ms < base_end)
+    res = _residuals(mine, in_base)
     judged = np.isfinite(res)
-    before, after = res[early & judged], res[~early & judged]
-    scatter = None
-    if before.size >= SIDE_MIN:
-        spread = 1.4826 * float(np.median(np.abs(before - np.median(before))))
-        scatter = max(spread, SCATTER_FLOOR_MAG)
+    base_res = res[in_base & judged]
+    after = res[(mine.epoch_ms >= anchor_ms) & (mine.epoch_ms < end) & judged]
+    scatter = _hourly_scatter(res, mine.epoch_ms, in_base & judged, base_start)
     shift = float(np.median(after)) if after.size >= SIDE_MIN and scatter is not None else None
+    inside = (mine.epoch_ms >= start) & (mine.epoch_ms < end)
     hour = (mine.epoch_ms - start) // HOUR_MS
     medians = np.full(HOURS, np.nan)
     counts = np.zeros(HOURS, dtype=np.int64)
     for h in range(HOURS):
-        values = res[(hour == h) & judged]
+        values = res[inside & (hour == h) & judged]
         counts[h] = values.size
         if values.size and scatter is not None:
             medians[h] = float(np.median(values))
-    spans = _spans(res, hour, judged, medians, counts, scatter, start)
+    spans = _spans(res, hour, inside & judged, medians, counts, scatter, start)
     departs = any(s.end_ms > anchor_ms - EARLY_MS for s in spans)
     return SensorRow(
-        name, int(before.size), int(after.size), scatter, shift, medians, counts, spans, departs
+        name, int(base_res.size), int(after.size), scatter, shift, medians, counts, spans, departs
     )
 
 
-def _residuals(mine: Series, anchor_ms: int) -> FloatArray:
-    """Each observation less the median of the same sensor's day before at the same SEPA.
+def _hourly_scatter(
+    res: FloatArray, times: IntArray, chosen: npt.NDArray[np.bool_], base_start: int
+) -> float | None:
+    """The noise a departing hour must stand above, or None if too few hours.
 
-    An observation from the day before leaves itself out, so the day before's
-    own scatter is measured the same way as the departures after the time.
+    The larger of two: the robust scatter of the baseline's hourly medians, and
+    the spread of its nightly medians. Hours of one night share that night's
+    offset, so the nightly spread is what a whole night's departure is judged
+    against; it is a plain standard deviation, as a robust one from about 7
+    nights is too unsteady.
     """
-    early = mine.epoch_ms < anchor_ms
-    order = np.flatnonzero(early)[np.argsort(mine.sepa[early], kind="stable")]
-    sepa, mag = mine.sepa[order], mine.mag[order]
-    rank = np.full(mine.epoch_ms.size, -1)
-    rank[order] = np.arange(order.size)
+    hour = (times[chosen] - base_start) // HOUR_MS
+    values = res[chosen]
+    medians = [
+        float(np.median(values[hour == h]))
+        for h in np.unique(hour)
+        if np.count_nonzero(hour == h) >= HOUR_MIN
+    ]
+    if len(medians) < BASELINE_HOURS_MIN or values.size < SIDE_MIN:
+        return None
+    hourly = np.asarray(medians)
+    spread = 1.4826 * float(np.median(np.abs(hourly - np.median(hourly))))
+    night = hour // 24
+    nightly = [
+        float(np.median(values[night == n]))
+        for n in np.unique(night)
+        if np.count_nonzero(night == n) >= SIDE_MIN
+    ]
+    if len(nightly) >= NIGHTS_MIN:
+        spread = max(spread, float(np.std(nightly, ddof=1)))
+    return max(spread, SCATTER_FLOOR_MAG)
+
+
+def _residuals(mine: Series, in_base: npt.NDArray[np.bool_]) -> FloatArray:
+    """Each observation less the median of the same sensor's baseline at the same SEPA.
+
+    Baseline observations from the observation's own night are left out, so
+    every comparison is night to night, the baseline's own included.
+    """
+    order = np.flatnonzero(in_base)[np.argsort(mine.sepa[in_base], kind="stable")]
+    sepa, mag, when_ms = mine.sepa[order], mine.mag[order], mine.epoch_ms[order]
     out = np.full(mine.epoch_ms.size, np.nan)
     for i in range(mine.epoch_ms.size):
         lo = int(np.searchsorted(sepa, mine.sepa[i] - SEPA_MATCH_DEG, "left"))
         hi = int(np.searchsorted(sepa, mine.sepa[i] + SEPA_MATCH_DEG, "right"))
-        own = int(rank[i])
-        near = np.concatenate([mag[lo:own], mag[own + 1 : hi]]) if own >= 0 else mag[lo:hi]
+        other_night = np.abs(when_ms[lo:hi] - mine.epoch_ms[i]) >= OWN_NIGHT_MS
+        near = mag[lo:hi][other_night]
         if near.size >= MATCH_MIN:
             out[i] = mine.mag[i] - float(np.median(near))
     return out
@@ -218,9 +274,7 @@ def _spans(
     """Runs of consecutive departing hours of one sign."""
     if scatter is None:
         return ()
-    limit = np.maximum(
-        SHIFT_FLOOR_MAG, DEPART_Z * MEDIAN_ERROR * scatter / np.sqrt(np.maximum(counts, 1))
-    )
+    limit = max(SHIFT_FLOOR_MAG, DEPART_Z * scatter)
     sign = np.where(
         (counts >= HOUR_MIN) & (np.abs(np.nan_to_num(medians)) >= limit), np.sign(medians), 0
     )
@@ -233,10 +287,15 @@ def _spans(
         first = h
         while h + 1 < HOURS and sign[h + 1] == sign[first]:
             h += 1
-        inside = judged & (hour >= first) & (hour <= h)
-        spans.append(
-            Span(start + first * HOUR_MS, start + (h + 1) * HOUR_MS, float(np.median(res[inside])))
-        )
+        if h - first + 1 >= SPAN_MIN_HOURS:
+            inside = judged & (hour >= first) & (hour <= h)
+            spans.append(
+                Span(
+                    start + first * HOUR_MS,
+                    start + (h + 1) * HOUR_MS,
+                    float(np.median(res[inside])),
+                )
+            )
         h += 1
     return tuple(spans)
 
@@ -365,7 +424,7 @@ def apart(ms: float, anchor_ms: int) -> str:
 
 def name_of(sat_no: int, names: Mapping[int, str]) -> str:
     name = names.get(sat_no)
-    return f"{name} ({sat_no})" if name else f"NORAD {sat_no}"
+    return f"NORAD {sat_no} ({name})" if name else f"NORAD {sat_no}"
 
 
 def joined(items: Sequence[str]) -> str:
@@ -394,9 +453,9 @@ def _manoeuvre(
             f"Too few {source} elsets in the {ELSET_BASELINE_DAYS} days before "
             f"({baseline} steps) to know this object's typical step.",
         )
-    big = max(steps, key=lambda s: abs(s.step_min))
-    times = big.times_typical or 0.0
-    if times < STEP_FITS_TIMES:
+    large = [s for s in steps if (s.times_typical or 0.0) >= STEP_FITS_TIMES]
+    if not large:
+        times = max(s.times_typical or 0.0 for s in steps)
         return Card(
             "manoeuvre",
             "against",
@@ -405,16 +464,33 @@ def _manoeuvre(
             f"object's typical step over the {ELSET_BASELINE_DAYS} days before: "
             "no manoeuvre shows in the elements.",
         )
+    # A step fits when the two elsets around it bracket a moment near the time.
+    near = [
+        s
+        for s in large
+        if s.before_ms <= anchor_ms + NEAR_STEP_MS and s.after_ms >= anchor_ms - NEAR_STEP_MS
+    ]
+    big = max(near or large, key=lambda s: abs(s.step_min))
+    body = _step_text(big, source, anchor_ms)
+    if not near:
+        return Card(
+            "manoeuvre", "against", title, f"{body} That is too far from your time to explain it."
+        )
+    return Card("manoeuvre", "fits", title, body)
+
+
+def _step_text(big: ElsetStep, source: str, anchor_ms: int) -> str:
     body = (
-        f"{source} period changed by {big.step_min:+.3f} min, {times:,.0f} times this object's "
-        f"typical step over the {ELSET_BASELINE_DAYS} days before: the last elset without it is "
+        f"{source} period changed by {big.step_min:+.3f} min, "
+        f"{big.times_typical or 0.0:,.0f} times this object's typical step over the "
+        f"{ELSET_BASELINE_DAYS} days before: the last elset without it is "
         f"{when(big.before_ms)}, the first with it {when(big.after_ms)} "
         f"({apart(big.after_ms, anchor_ms)})."
     )
     if big.after_ms - big.before_ms > LOOSE_ELSET_GAP_MS:
         gap = (big.after_ms - big.before_ms) / HOUR_MS
         body += f" Those elsets are {gap:.0f} hours apart, so the timing is loose."
-    return Card("manoeuvre", "fits", title, body)
+    return body
 
 
 def _neighbour(
@@ -484,7 +560,16 @@ def _season(flag: SeasonalFlag | None, rows: Sequence[SensorRow]) -> Card:
         return Card(
             "season", "cannot", title, f"{quoted}. A seasonal comparison is not valid here."
         )
-    if any(r.departs for r in rows):
+    judged = _judged(rows)
+    if not judged:
+        return Card(
+            "season",
+            "cannot",
+            title,
+            f"No sensor could be compared with itself around your time, so the timing "
+            f"cannot be judged. {quoted} across the window.",
+        )
+    if any(r.departs for r in judged):
         return Card(
             "season",
             "against",
@@ -515,7 +600,7 @@ def _sensor(rows: Sequence[SensorRow]) -> Card:
             "sensor",
             "cannot",
             title,
-            f"None of {len(judged)} sensors departs from its own day before, "
+            f"None of {len(judged)} sensors departs from its own previous 7 days, "
             "so there is no change to put down to a sensor.",
         )
     if len(departing) == 1:
@@ -531,7 +616,7 @@ def _sensor(rows: Sequence[SensorRow]) -> Card:
         "against",
         title,
         f"{joined([r.name for r in departing])} depart together, each against its own "
-        "day before, so it is not one sensor's artefact.",
+        "previous 7 days, so it is not one sensor's artefact.",
     )
 
 
@@ -550,11 +635,11 @@ def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) 
             s.start_ms for r in departing for s in r.spans if s.end_ms > anchor_ms - EARLY_MS
         )
         bright = (
-            f"{len(departing)} of {len(judged)} sensors depart from their own day before, "
+            f"{len(departing)} of {len(judged)} sensors depart from their own previous 7 days, "
             f"from {when(first)}"
         )
     else:
-        bright = f"None of {len(judged)} sensors departs from its own day before"
+        bright = f"None of {len(judged)} sensors departs from its own previous 7 days"
     fitting = [c.title for c in cards if c.state == "fits"]
     if fitting:
         return f"{bright}. Fits the timing: {joined(fitting)}."
@@ -564,7 +649,7 @@ def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) 
 def _lead(anchor_ms: int, data_end_ms: int, source: str) -> str:
     start, end = strip(anchor_ms)
     text = (
-        f"72 hours from {when(start)}: each sensor against itself the day before at the same "
+        f"72 hours from {when(start)}: each sensor against its own previous 7 days at the same "
         f"SEPA, {source} elset steps against the {ELSET_BASELINE_DAYS} days before, and every "
         "pass within reach."
     )

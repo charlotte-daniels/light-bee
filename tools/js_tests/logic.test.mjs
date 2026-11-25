@@ -49,6 +49,9 @@ test('the run form is checked before anything is sent, naming the field', () => 
   assert.equal(checkRunInputs({ ...good, thresholdKm: '0' }, '2026-11-10').field, 'threshold');
   assert.equal(checkRunInputs({ ...good, changeTime: '' }, '2026-11-10'), null);
   assert.equal(checkRunInputs({ ...good, changeTime: '05:30' }, '2026-11-10'), null);
+  const short = checkRunInputs({ ...good, changeTime: '05:30', windowDays: '2' }, '2026-11-10');
+  assert.equal(short.field, 'window-days');
+  assert.equal(checkRunInputs({ ...good, windowDays: '2' }, '2026-11-10'), null);
   for (const bad of ['5:30', '24:00', '05:60', 'noon']) {
     assert.equal(checkRunInputs({ ...good, changeTime: bad }, '2026-11-10').field, 'change-time');
   }

@@ -17,6 +17,7 @@ from lightbee.analysis.triage import (
     HOURS,
     STEP_FITS_TIMES,
     Inputs,
+    baseline,
     board,
     elset_steps,
     passes_in_strip,
@@ -32,20 +33,28 @@ SENSORS = ("EXO1612", "EXO1834", "EXO1840")
 
 
 def photometry(
-    events: dict[str, tuple[float, float, float]] | None = None, *, seed: int = 3
+    events: dict[str, tuple[float, float, float]] | None = None,
+    *,
+    seed: int = 3,
+    nightly_mag: float = 0.0,
 ) -> Series:
-    """Three sensors every 10 minutes through the strip, each with its own offset.
+    """Three sensors every 10 minutes from the baseline's start to the strip's end.
 
-    Brightness follows SEPA through the day; `events` adds mag to one sensor
-    between two times, in hours from the anchor.
+    Each sensor has its own offset; brightness follows SEPA through the day;
+    `nightly_mag` gives each sensor a fresh zero-point offset every day, as
+    real sensors have; `events` adds mag to one sensor between two times, in
+    hours from the anchor.
     """
     rng = np.random.default_rng(seed)
-    start, end = strip(A)
+    _, end = strip(A)
+    first, _ = baseline(A)
     times, mags, sepas, sensor = [], [], [], []
     for index, name in enumerate(SENSORS):
-        t = np.arange(start + index * 120_000, end, 600_000, dtype=np.int64)
+        t = np.arange(first + index * 120_000, end, 600_000, dtype=np.int64)
         sepa = ((t % 86_400_000) / 86_400_000) * 160.0 - 80.0
         mag = 11.0 + 0.02 * np.abs(sepa) + 0.25 * index + rng.normal(0.0, 0.04, t.size)
+        day = (t - first) // 86_400_000
+        mag += rng.normal(0.0, nightly_mag, int(day.max()) + 1)[day] if nightly_mag else 0.0
         for who, (lo, hi, by) in (events or {}).items():
             if who == name:
                 mag[(t >= A + lo * HOUR_MS) & (t < A + hi * HOUR_MS)] += by
@@ -147,7 +156,7 @@ def test_a_three_hour_fade_in_every_sensor_is_dated_to_the_hour() -> None:
         assert span.median_mag == pytest.approx(0.3, abs=0.06)
     result = made(photometry(fade))
     assert result.headline.startswith(
-        "3 of 3 sensors depart from their own day before, from 19 Nov 05:30Z"
+        "3 of 3 sensors depart from their own previous 7 days, from 19 Nov 05:30Z"
     )
     assert card(result, "sensor").state == "against"  # all three together: not one sensor
     assert card(result, "season").state == "against"  # hours, not seasons
@@ -196,7 +205,7 @@ def test_every_pass_in_the_strip_is_listed_and_a_routine_neighbour_says_so() -> 
     neighbour = card(made(found_elsets=elsets(), found=found, names={67226: "TJS-23"}), "neighbour")
     assert neighbour.state == "fits"
     assert (
-        "TJS-23 (67226) passed at 74 km on 19 Nov 03:18Z, 1.2 hours before your time"
+        "NORAD 67226 (TJS-23) passed at 74 km on 19 Nov 03:18Z, 1.2 hours before your time"
         in neighbour.body
     )
     assert "passes 6 times in these 72 hours" in neighbour.body
@@ -285,7 +294,7 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
     assert labels[0]["text"][0].startswith("+0.10")
     (passes,) = [t for t in figure["data"] if t.get("mode") == "markers+text"]
     assert len(passes["x"]) == 4
-    assert passes["text"][0] == "TJS-23 (67226) 74 km"
+    assert passes["text"][0] == "NORAD 67226 (TJS-23) 74 km"
     texts = [a["text"] for a in figure["layout"]["annotations"]]
     assert texts.count("UNCLASSIFIED") == 2
     assert "your change time, 19 Nov 04:30Z" in texts
@@ -301,3 +310,51 @@ def test_a_strip_with_no_sensor_says_so() -> None:
     assert all(t["type"] != "heatmap" for t in figure["data"])
     texts = [a["text"] for a in figure["layout"]["annotations"]]
     assert "No sensor saw the object in these 72 hours." in texts
+
+
+def test_the_season_card_cannot_judge_when_no_sensor_can_be_compared() -> None:
+    season = card(made(), "season")  # a consistent flag, but no photometry near the time
+    assert season.state == "cannot"
+    assert "No sensor could be compared" in season.body
+    assert "Consistent with earlier years" in season.body
+
+
+def test_a_change_three_hours_before_the_time_is_dated_to_when_it_began() -> None:
+    """Engineering review 1.4: the reference must not be the analyst's own guess."""
+    rows = sensor_rows(photometry(dict.fromkeys(SENSORS, (-3.0, 10.0, 0.5))), A)
+    for row in rows:
+        assert row.departs
+        assert [(s.start_ms - A) / HOUR_MS for s in row.spans] == [-3.0], row.spans
+        assert row.spans[0].end_ms == A + 10 * HOUR_MS
+
+
+def test_a_change_over_before_the_time_is_seen_and_leaves_no_phantoms() -> None:
+    rows = sensor_rows(photometry(dict.fromkeys(SENSORS, (-5.0, -1.0, 0.5))), A)
+    for row in rows:
+        assert row.departs  # it ended within EARLY_MS of the time
+        assert [((s.start_ms - A) / HOUR_MS, (s.end_ms - A) / HOUR_MS) for s in row.spans] == [
+            (-5.0, -1.0)
+        ]
+
+
+@pytest.mark.parametrize("nightly", [0.03, 0.1])
+def test_nightly_sensor_offsets_alone_raise_no_departure(nightly: float) -> None:
+    """Real sensors drift night to night by 0.05 to 0.2 mag; that is not a change."""
+    for seed in range(10):
+        rows = sensor_rows(photometry(seed=seed, nightly_mag=nightly), A)
+        assert not any(r.departs for r in rows), [(r.name, r.spans) for r in rows]
+
+
+def test_a_large_step_far_from_the_time_does_not_fit() -> None:
+    manoeuvre = card(made(found_elsets=elsets(step_at_hours=20.0)), "manoeuvre")
+    assert manoeuvre.state == "against"
+    assert "too far from your time" in manoeuvre.body
+
+
+def test_a_three_tenths_fade_still_shows_through_nightly_offsets() -> None:
+    for seed in range(5):
+        fade = dict.fromkeys(SENSORS, (1.0, 6.0, 0.3))
+        rows = sensor_rows(photometry(fade, seed=seed, nightly_mag=0.03), A)
+        # A sensor whose 7 nights happen to scatter widely may miss it; the others do not.
+        departing = sum(r.departs for r in rows)
+        assert departing >= 2, (seed, [(r.name, r.scatter_mag) for r in rows])

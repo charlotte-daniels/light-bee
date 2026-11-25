@@ -324,7 +324,9 @@ def _distinct_passes(
     for tca, distance in sorted(found):
         if kept:
             between = track[(times > kept[-1][0]) & (times < tca)]
-            rise = float(np.nanmax(between)) if between.size else -np.inf
+            # No valid range between two dips (SGP4 failed there): taken as one pass.
+            valid = between[np.isfinite(between)]
+            rise = float(valid.max()) if valid.size else -np.inf
             if rise - max(distance, kept[-1][1]) < PASS_RISE_KM:
                 if distance < kept[-1][1]:
                     kept[-1] = (tca, distance)

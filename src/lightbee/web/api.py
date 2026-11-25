@@ -166,6 +166,8 @@ FIELD_MESSAGES: Final = {
     "change_time": "Enter the change time as HH:MM (UTC), no later than now, or leave it blank.",
     "times_ms": "Select between 1 and 50,000 observations inside the window.",
 }
+BOARD_MIN_WINDOW_DAYS: Final = 3
+BOARD_WINDOW_MESSAGE: Final = "With a change time, the window must be at least 3 days."
 SIGN_IN_MESSAGE: Final = "Enter your UDL username and password."
 MAX_KNOWN_USERS: Final = 1024
 UNDERSTOOD: Final = "The request was not understood."
@@ -499,6 +501,10 @@ def _run_request(body: RunBody, now: datetime) -> RunRequest:
     )
     if made.anchor is not None and made.anchor > now:
         raise ApiError(422, FIELD_MESSAGES["change_time"])
+    # The board looks 24 hours before the time and 48 after, and the window ends
+    # 48 hours after it, so a shorter window would leave the strip part-screened.
+    if made.anchor is not None and made.window_days < BOARD_MIN_WINDOW_DAYS:
+        raise ApiError(422, BOARD_WINDOW_MESSAGE)
     return made
 
 

@@ -223,3 +223,10 @@ Light Bee V1 is done when all of these are true:
 * **The size probe is read in 8 parallel pieces.** The UDL returns a few hundred records a second per request, so a dense week read as one request took over a minute.
 * **Each earlier season's longitude is stated on its own.** A mean across years at different slots names a place the object never was (43874 read 128.7°E).
 * **Heatmap colours follow the predecessor's Dynamic Range product.** Limits are fitted to each object's magnitudes, so colours are comparable within a plot, not between plots of different objects; the colour bar states the limits on every export.
+
+## Decisions for the anchored triage board (1.4, 25 November 2026)
+
+* **The analyst's change time anchors the board.** Proposal 02's blind week-wide search failed 3 of the owner's 4 known events, and every event came with a time, so the board starts from it. The time is optional; without it the app behaves as before.
+* **With a change time, the window ends 48 hours after it, not at the end of the change date.** The seasonal flag therefore compares a window that includes up to 2 days after the change. A change time needs a window of at least 3 days, so the 72-hour strip is wholly screened for close approaches.
+* **Each sensor is compared with itself, over the 7 days ending 6 hours before the time, at the same SEPA and always from another night.** A change that began up to 6 hours before the analyst's time is dated to when it began. The departure limit is 0.1 mag or 4 times the larger of the baseline's hourly and nightly spread, over at least 2 consecutive hours, so the night-to-night offsets of real sensors do not read as a change. The cost: a sensor whose baseline nights happen to scatter widely can miss a 0.3 mag change that the others see.
+* **A period step fits a manoeuvre at 20 times the object's typical step over the 30 days before, when its elsets bracket a moment within 12 hours of the time.** These thresholds are first settings, to be checked against the owner's four cases.

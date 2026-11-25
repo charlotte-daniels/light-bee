@@ -716,22 +716,28 @@ def board_of(run: Run) -> Board | None:
         return held
     if not ready:
         return None
-    flag = flag_of(run, "auto")
-    photometry = data.photometry
-    given = Inputs(
-        _series(data, photometry, "auto") if photometry is not None else None,
-        data.elsets.elsets if data.elsets is not None else [],
-        run.request.provider,
-        found,
-        flag,
-        run.request.threshold_km,
-        names,
-        note,
-    )
-    made = board(given, anchor_ms=round(anchor.timestamp() * 1000), data_end_ms=data.end_ms)
-    with run.lock:
-        run.results["_board"] = made
-    return made
+    flag = flag_of(run, "auto")  # before the compute lock: it takes that lock itself
+    # One board at a time per run: requests arriving together wait for the first.
+    with run.compute:
+        with run.lock:
+            held = run.results.get("_board")
+        if isinstance(held, Board):
+            return held
+        photometry = data.photometry
+        given = Inputs(
+            _series(data, photometry, "auto") if photometry is not None else None,
+            data.elsets.elsets if data.elsets is not None else [],
+            run.request.provider,
+            found,
+            flag,
+            run.request.threshold_km,
+            names,
+            note,
+        )
+        made = board(given, anchor_ms=round(anchor.timestamp() * 1000), data_end_ms=data.end_ms)
+        with run.lock:
+            run.results["_board"] = made
+        return made
 
 
 def _publish_orbit(run: Run, data: RunData) -> None:

@@ -1,7 +1,7 @@
 """The triage board's strip: 72 hours around the analyst's change time.
 
-Each sensor's row shows, hour by hour, how far it sits from its own day before
-at the same SEPA (fainter is warmer). Below, the elset period steps and every
+Each sensor's row shows, hour by hour, how far it sits from its own previous
+7 days at the same SEPA (fainter is warmer). Below, the elset period steps and every
 pass within reach. The change time is the amber line. The verdict cards are
 drawn by the page, not here; the figure carries the headline, so the PNG still
 says what the board found.
@@ -26,10 +26,10 @@ from lightbee.figures.common import (
     rounded,
 )
 
-# Brighter than the day before is blue, fainter is orange; both ends read on
-# black, and the middle is the plot's own dark grey, so an hour with nothing
-# to compare is a gap, not a zero.
-DEPARTURE_SCALE: Final = [[0.0, "#3a7bd5"], [0.5, "#1b2433"], [1.0, "#f39c12"]]
+# Brighter than the baseline is blue, fainter is orange; both ends read on
+# black. No change is a mid grey (3.4:1 on black), so an hour with nothing to
+# compare, left black, is a gap and never reads as a zero.
+DEPARTURE_SCALE: Final = [[0.0, "#3a7bd5"], [0.5, "#5c6675"], [1.0, "#f39c12"]]
 DEPARTURE_RANGE_MAG: Final = 0.5
 # Steps smaller than this many times typical are not marked on the strip.
 MARKED_STEP_TIMES: Final = 5.0
@@ -62,11 +62,14 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
                 "ygap": 2,
                 "hoverongaps": False,
                 "hovertemplate": (
-                    "%{y}<br>%{x|%d %b %H}:00Z hour<br>%{z:+.2f} mag against its day before"
+                    "%{y}<br>%{x|%d %b %H}:00Z hour<br>%{z:+.2f} mag against its previous 7 days"
                     "<br>%{customdata} observations<extra></extra>"
                 ),
                 "colorbar": {
-                    "title": {"text": "mag v. day before<br>(fainter +)", "side": "right"},
+                    "title": {
+                        "text": "mag v. previous 7 days<br>(fainter +; black: no data)",
+                        "side": "right",
+                    },
                     "tickfont": {"color": MUTED},
                     "len": 1 - split,
                     "y": 1.0,
@@ -116,20 +119,24 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
     figure_layout["dragmode"] = False
     figure_layout["shapes"] = [
         *figure_layout["shapes"],
-        {
-            "type": "line",
-            "xref": "x",
-            "yref": "paper",
-            "x0": anchor,
-            "x1": anchor,
-            "y0": 0,
-            "y1": 1,
-            "line": {"color": AMBER, "width": 3},
-        },
+        # A dark casing under the amber line keeps it visible over orange cells.
+        *(
+            {
+                "type": "line",
+                "xref": "x",
+                "yref": "paper",
+                "x0": anchor,
+                "x1": anchor,
+                "y0": 0,
+                "y1": 1,
+                "line": line,
+            }
+            for line in ({"color": "#000000", "width": 7}, {"color": AMBER, "width": 3})
+        ),
     ]
     figure_layout["annotations"] = [
         *figure_layout["annotations"],
-        panel_title("Each sensor against itself the day before, hour by hour", "x", 1.0),
+        panel_title("Each sensor against its own previous 7 days, hour by hour", "x", 1.0),
         {
             "text": f"your change time, {escape(when(board.anchor_ms))}",
             "xref": "x",

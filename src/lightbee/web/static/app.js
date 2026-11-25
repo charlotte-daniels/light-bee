@@ -13,7 +13,7 @@ const SERVER_FIELDS = {
   threshold_km: 'threshold', change_time: 'change-time',
 };
 // What each card's state reads as; the colour only repeats it.
-const CARD_STATES = Object.freeze({ fits: 'Fits the timing', against: 'Does not fit', cannot: "Can't judge" });
+const CARD_STATES = Object.freeze({ fits: 'Fits the timing', against: 'Does not fit', cannot: 'Cannot judge' });
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -303,6 +303,9 @@ async function drawCauses() {
 // The board reads only what Other Causes reads, so it is drawn with it. A board
 // that cannot be drawn says so in place and never stops Other Causes.
 async function drawBoard() {
+  $('board-headline').textContent = 'Drawing the triage board.';
+  $('board-lead').textContent = '';
+  $('board-cards').replaceChildren();
   $('board').hidden = false;
   try {
     const board = await api(runPath('/board'));
@@ -327,6 +330,11 @@ function boardCard(card) {
   label.textContent = CARD_STATES[card.state] ?? card.state;
   const title = document.createElement('h3');
   title.textContent = card.title;
+  // Heading navigation hears the verdict too; the visible label stays above.
+  const said = document.createElement('span');
+  said.className = 'visually-hidden';
+  said.textContent = ` (${CARD_STATES[card.state] ?? card.state})`;
+  title.append(said);
   const body = document.createElement('p');
   body.textContent = card.body;
   article.append(label, title, body);

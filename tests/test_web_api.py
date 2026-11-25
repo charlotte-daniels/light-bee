@@ -1056,3 +1056,13 @@ def test_a_change_time_still_to_come_is_refused(fake: FakeUdl) -> None:
         )
         assert response.status_code == 422
         assert "no later than now" in response.json()["error"]
+
+
+def test_a_change_time_needs_a_window_of_at_least_three_days(fake: FakeUdl) -> None:
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        response = test_client.post(
+            "/api/runs", json={**RUN, "window_days": 2, "change_time": "06:00"}, headers=HEADERS
+        )
+        assert response.status_code == 422
+        assert "at least 3 days" in response.json()["error"]

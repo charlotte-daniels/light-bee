@@ -111,6 +111,10 @@ export function checkRunInputs(values, today) {
   if (values.changeTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(values.changeTime)) {
     return { field: 'change-time', message: 'Enter the change time as HH:MM (UTC), or leave it blank.' };
   }
+  // The board looks 24 hours before the time and 48 after: 3 days in all.
+  if (values.changeTime && window < 3) {
+    return { field: 'window-days', message: 'With a change time, the window must be at least 3 days.' };
+  }
   return null;
 }
 
