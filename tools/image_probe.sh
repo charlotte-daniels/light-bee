@@ -50,7 +50,8 @@ echo "   uid $uid"
 for path in /opt/venv/bin/pip /usr/local/bin/pip /sbin/apk /usr/local/lib/python3.12/sqlite3; do
   if docker run --rm "$tag" test -e "$path"; then fail "$path present"; fi
 done
-suid="$(docker run --rm "$tag" find / -xdev \( -perm -4000 -o -perm -2000 \) -type f)"
+# As root, so find can read every directory (the image user cannot read /root).
+suid="$(docker run --rm --user 0 "$tag" find / -xdev \( -perm -4000 -o -perm -2000 \) -type f)"
 [ -z "$suid" ] || fail "setuid or setgid files: $suid"
 echo "   no pip, apk, sqlite3, setuid or setgid"
 
