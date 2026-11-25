@@ -156,7 +156,8 @@ def test_a_three_hour_fade_in_every_sensor_is_dated_to_the_hour() -> None:
         assert span.median_mag == pytest.approx(0.3, abs=0.06)
     result = made(photometry(fade))
     assert result.headline.startswith(
-        "3 of 3 sensors depart from their own previous 7 days, from 19 Nov 05:30Z"
+        "3 of 3 sensors observing those hours depart from their own previous 7 days, "
+        "from 19 Nov 05:30Z"
     )
     assert card(result, "sensor").state == "against"  # all three together: not one sensor
     assert card(result, "season").state == "against"  # hours, not seasons
@@ -298,7 +299,7 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
     texts = [a["text"] for a in figure["layout"]["annotations"]]
     assert texts.count("UNCLASSIFIED") == 2
     assert "your change time, 19 Nov 04:30Z" in texts
-    assert figure["summary"].startswith("Triage strip. 3 of 3 sensors depart")
+    assert figure["summary"].startswith("Triage strip. 3 of 3 sensors observing those hours depart")
 
 
 def test_a_strip_with_no_sensor_says_so() -> None:
@@ -389,3 +390,25 @@ def test_the_season_card_does_not_fit_when_the_flag_departs_and_no_sensor_does()
         made(photometry(), the_flag=flag("departs", "Departs from the seasonal pattern")), "season"
     )
     assert season.state == "against"
+
+
+def test_one_hour_in_a_second_sensor_confirms_anothers_departure() -> None:
+    """Case 4 of the owner's events: EXO1840 brightened 3 mag for 2 hours and
+    EXO1841 by as much in one of them; that is two sensors, not one artefact."""
+    events = {"EXO1612": (1.0, 3.0, -3.0), "EXO1834": (2.0, 3.0, -3.0)}
+    series = photometry(events)
+    keep = (series.sensor != 2) | (series.epoch_ms < A)  # EXO1840 silent after the time
+    result = made(series.take(keep))
+    sensor = card(result, "sensor")
+    assert sensor.state == "against"
+    assert "EXO1612 and EXO1834 depart the same way in the same hours" in sensor.body
+    assert result.headline.startswith("2 of 2 sensors observing those hours depart")
+
+
+def test_a_lone_departure_no_other_sensor_observed_cannot_be_judged() -> None:
+    series = photometry({"EXO1612": (1.0, 4.0, -1.0)})
+    hours = (series.epoch_ms >= A) & (series.epoch_ms < A + 5 * HOUR_MS)
+    alone = series.take(~hours | (series.sensor == 0))  # the others silent in those hours
+    sensor = card(made(alone), "sensor")
+    assert sensor.state == "cannot"
+    assert "no other sensor observed those hours" in sensor.body

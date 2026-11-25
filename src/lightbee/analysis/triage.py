@@ -113,6 +113,9 @@ class SensorRow:
     hour_count: IntArray  # (HOURS,)
     spans: tuple[Span, ...]
     departs: bool  # a span starts within EARLY_MS before the time, or after it
+    # (HOURS,): +1 or -1 where that hour alone departs, else 0. A single hour
+    # never stands alone as a change, but it does confirm another sensor's.
+    hour_sign: IntArray
 
 
 @dataclass(frozen=True)
@@ -203,11 +206,30 @@ def _sensor_row(name: str, mine: Series, anchor_ms: int) -> SensorRow:
         counts[h] = values.size
         if values.size and scatter is not None:
             medians[h] = float(np.median(values))
-    spans = _spans(res, hour, inside & judged, medians, counts, scatter, start)
+    sign = _hour_signs(medians, counts, scatter)
+    spans = _spans(res, hour, inside & judged, sign, start)
     departs = any(s.end_ms > anchor_ms - EARLY_MS for s in spans)
     return SensorRow(
-        name, int(base_res.size), int(after.size), scatter, shift, medians, counts, spans, departs
+        name,
+        int(base_res.size),
+        int(after.size),
+        scatter,
+        shift,
+        medians,
+        counts,
+        spans,
+        departs,
+        sign,
     )
+
+
+def _hour_signs(medians: FloatArray, counts: IntArray, scatter: float | None) -> IntArray:
+    """+1 or -1 for each hour that departs on its own, else 0."""
+    if scatter is None:
+        return np.zeros(HOURS, dtype=np.int64)
+    limit = max(SHIFT_FLOOR_MAG, DEPART_Z * scatter)
+    departing = (counts >= HOUR_MIN) & (np.abs(np.nan_to_num(medians)) >= limit)
+    return np.where(departing, np.sign(np.nan_to_num(medians)), 0).astype(np.int64)
 
 
 def _hourly_scatter(
@@ -266,18 +288,10 @@ def _spans(
     res: FloatArray,
     hour: IntArray,
     judged: npt.NDArray[np.bool_],
-    medians: FloatArray,
-    counts: IntArray,
-    scatter: float | None,
+    sign: IntArray,
     start: int,
 ) -> tuple[Span, ...]:
-    """Runs of consecutive departing hours of one sign."""
-    if scatter is None:
-        return ()
-    limit = max(SHIFT_FLOOR_MAG, DEPART_Z * scatter)
-    sign = np.where(
-        (counts >= HOUR_MIN) & (np.abs(np.nan_to_num(medians)) >= limit), np.sign(medians), 0
-    )
+    """Runs of at least SPAN_MIN_HOURS consecutive departing hours of one sign."""
     spans: list[Span] = []
     h = 0
     while h < HOURS:
@@ -393,7 +407,7 @@ def board(given: Inputs, *, anchor_ms: int, data_end_ms: int) -> Board:
             passes, given.threshold_km, given.names, anchor_ms, given.approaches_note, has_elsets
         ),
         _season(given.flag, rows),
-        _sensor(rows),
+        _sensor(rows, anchor_ms),
     )
     return Board(
         anchor_ms,
@@ -581,7 +595,7 @@ def _season(flag: SeasonalFlag | None, rows: Sequence[SensorRow]) -> Card:
     return Card("season", "against", title, f"{quoted}.")
 
 
-def _sensor(rows: Sequence[SensorRow]) -> Card:
+def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
     title = "Sensor"
     judged = _judged(rows)
     departing = [r for r in judged if r.departs]
@@ -603,21 +617,66 @@ def _sensor(rows: Sequence[SensorRow]) -> Card:
             f"None of {len(judged)} sensors departs from its own previous 7 days, "
             "so there is no change to put down to a sensor.",
         )
-    if len(departing) == 1:
+    agreeing, level = _agreement(rows, anchor_ms)
+    if len(agreeing) >= MIN_SENSORS:
         return Card(
             "sensor",
-            "fits",
+            "against",
             title,
-            f"Only {departing[0].name} departs; the other {len(judged) - 1} stay level. "
-            "One sensor's artefact is likely.",
+            f"{joined([r.name for r in agreeing])} depart the same way in the same hours, "
+            "each against its own previous 7 days, so it is not one sensor's artefact.",
+        )
+    only = agreeing[0].name
+    if not level:
+        return Card(
+            "sensor",
+            "cannot",
+            title,
+            f"Only {only} departs, and no other sensor observed those hours, so one "
+            "sensor's artefact cannot be told from a change.",
         )
     return Card(
         "sensor",
-        "against",
+        "fits",
         title,
-        f"{joined([r.name for r in departing])} depart together, each against its own "
-        "previous 7 days, so it is not one sensor's artefact.",
+        f"Only {only} departs; {joined([r.name for r in level])}, observing the same "
+        f"hours, {'stays' if len(level) == 1 else 'stay'} level. One sensor's artefact "
+        "is likely.",
     )
+
+
+def _agreement(
+    rows: Sequence[SensorRow], anchor_ms: int
+) -> tuple[list[SensorRow], list[SensorRow]]:
+    """The sensors that depart, and those that observed the same hours and stayed level.
+
+    A sensor departing the same way in any of a departure's hours, even for one
+    hour, confirms it; only a sensor that observed those hours can say it did not.
+    """
+    start, _ = strip(anchor_ms)
+    judged = _judged(rows)
+    departing = [r for r in judged if r.departs]
+    if not departing:
+        return [], []
+    counted = [s for s in departing[0].spans if s.end_ms > anchor_ms - EARLY_MS]
+    sign = 1 if counted[0].median_mag > 0 else -1
+    hours = {
+        h
+        for r in departing
+        for s in r.spans
+        if s.end_ms > anchor_ms - EARLY_MS
+        for h in range((s.start_ms - start) // HOUR_MS, (s.end_ms - start) // HOUR_MS)
+    }
+    agreeing, level = list(departing), []
+    for row in rows:
+        if row in departing or row.scatter_mag is None:
+            continue
+        seen = [h for h in sorted(hours) if row.hour_count[h] >= HOUR_MIN]
+        if any(row.hour_sign[h] == sign for h in seen):
+            agreeing.append(row)
+        elif seen:
+            level.append(row)
+    return agreeing, level
 
 
 def _judged(rows: Sequence[SensorRow]) -> list[SensorRow]:
@@ -634,9 +693,13 @@ def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) 
         first = min(
             s.start_ms for r in departing for s in r.spans if s.end_ms > anchor_ms - EARLY_MS
         )
+        agreeing, level = _agreement(rows, anchor_ms)
+        seen = len(agreeing) + len(level)
+        verb = "departs" if len(agreeing) == 1 else "depart"
         bright = (
-            f"{len(departing)} of {len(judged)} sensors depart from their own previous 7 days, "
-            f"from {when(first)}"
+            f"{len(agreeing)} of {seen} {'sensor' if seen == 1 else 'sensors'} observing "
+            f"those hours {verb} from {'its' if len(agreeing) == 1 else 'their'} own "
+            f"previous 7 days, from {when(first)}"
         )
     else:
         bright = f"None of {len(judged)} sensors departs from its own previous 7 days"

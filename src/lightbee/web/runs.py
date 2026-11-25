@@ -368,8 +368,14 @@ def _read_orbit(
     if need_catalogue:
         window_start, end = run.window_ms()
         run.set(stage="catalogue")
+        # One elset per neighbour, the one nearest this moment: the change time
+        # when one is given, so a neighbour that station-keeps is placed right at
+        # the moment the board judges. Case 1 of the owner's events found no pass
+        # with the window's middle, 37 hours before the encounter.
+        anchor = request.anchor
+        moment = _utc((window_start + end) // 2) if anchor is None else anchor.astimezone(UTC)
         data.catalogue, data.catalogue_tally = read_geo_catalogue(
-            client, _utc((window_start + end) // 2), source=request.provider
+            client, moment, source=request.provider
         )
         data.catalogue_span = (window_start, end)
 

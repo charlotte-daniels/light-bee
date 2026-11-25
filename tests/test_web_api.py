@@ -1103,3 +1103,28 @@ def test_the_board_is_built_once_however_often_it_is_asked_for(
         assert all(b is found[0] for b in found)
         assert test_client.get(f"/api/runs/{run_id}/board").status_code == 200
         assert len(built) == 1  # the route reuses the held board
+
+
+def test_the_geo_snapshot_is_taken_at_the_change_time_when_one_is_given(
+    fake: FakeUdl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import UTC, datetime
+
+    from lightbee.web import runs as runs_module
+
+    moments: list[datetime] = []
+    real = runs_module.read_geo_catalogue
+
+    def recorded(client: Any, moment: datetime, **kwargs: Any) -> Any:
+        moments.append(moment)
+        return real(client, moment, **kwargs)
+
+    monkeypatch.setattr(runs_module, "read_geo_catalogue", recorded)
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        test_client.post("/api/runs", json={**RUN, "change_time": "06:00"}, headers=HEADERS)
+        test_client.post(
+            "/api/runs", json={**RUN, "sat_no": 12345}, headers=HEADERS
+        )  # no time: the window's middle, as before
+    assert moments[0] == datetime(2026, 11, 10, 6, 0, tzinfo=UTC)
+    assert moments[1] != moments[0]
