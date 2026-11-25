@@ -293,7 +293,12 @@ def scan(
 
 @dataclass(frozen=True)
 class Approach:
-    """One neighbour's closest approach over the window, with its coarse track."""
+    """One neighbour's closest approach over the window, with its coarse track.
+
+    `passes` holds every refined pass within reach, in time order, as
+    (time ms, km): a neighbour can pass more than once in a window, and the
+    closest pass need not be the one that matters (1.4, owner's case 2).
+    """
 
     sat_no: int
     tca_ms: int
@@ -302,6 +307,20 @@ class Approach:
     borderline: bool
     track_ms: IntArray
     track_km: FloatArray
+    passes: tuple[tuple[int, float], ...] = ()
+
+
+def _distinct_passes(found: list[tuple[int, float]]) -> list[tuple[int, float]]:
+    """Passes in time order, two refinements of one pass (closer in time than a
+    refine window) kept once, at the closer distance."""
+    kept: list[tuple[int, float]] = []
+    for tca, distance in sorted(found):
+        if kept and tca - kept[-1][0] < REFINE_HALF_WIDTH_MS:
+            if distance < kept[-1][1]:
+                kept[-1] = (tca, distance)
+            continue
+        kept.append((tca, distance))
+    return kept
 
 
 def approaches(
@@ -330,7 +349,7 @@ def approaches(
     found = []
     reach = threshold + SGP4_UNCERTAINTY_KM
     for item, row in zip(near, _distances(near, times, target_r, deadline), strict=True):
-        best: tuple[int, float] | None = None
+        refined_passes: list[tuple[int, float]] = []
         for at in _minima(row, reach + sweep_slack_km(item, reference)):
             _check(deadline)
             centre = int(times[at])
@@ -338,14 +357,16 @@ def approaches(
                 max(start_ms, centre - REFINE_HALF_WIDTH_MS),
                 min(end_ms, centre + REFINE_HALF_WIDTH_MS),
             )
-            refined = _refine(item, targets, *span)
-            if best is None or refined[1] < best[1]:
-                best = refined
-        if best is not None and best[1] <= reach:
-            tca, distance = best
+            refined_passes.append(_refine(item, targets, *span))
+        within = _distinct_passes([p for p in refined_passes if p[1] <= reach])
+        if within:
+            tca, distance = min(within, key=lambda p: p[1])
             inside = distance <= threshold
             borderline = abs(distance - threshold) <= SGP4_UNCERTAINTY_KM
-            found.append(Approach(item.sat_no, tca, distance, inside, borderline, times, row))
+            passes = tuple((int(t), float(d)) for t, d in within)
+            found.append(
+                Approach(item.sat_no, tca, distance, inside, borderline, times, row, passes)
+            )
     found.sort(key=lambda a: a.range_km)
     return found
 

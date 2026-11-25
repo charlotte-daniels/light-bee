@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 import time
 from datetime import UTC, datetime, timedelta
@@ -252,3 +253,30 @@ def test_a_screen_past_its_deadline_stops_with_a_reason() -> None:
     with pytest.raises(ScreenError, match="time limit"):
         scan([T0], [geo(TARGET)], catalogue, deadline=time.monotonic() - 1)
     assert scan([T0], [geo(TARGET)], catalogue, deadline=time.monotonic() + 60).neighbours
+
+
+def test_every_pass_of_a_neighbour_is_kept_not_only_the_closest() -> None:
+    # Co-located but 0.2 degrees out of the target's plane: it meets the
+    # target at each node crossing, twice a day, and drifts apart between.
+    crossing = geo(40007, inclination=geo(TARGET).inclination + 0.2)
+    found = approaches(T0, T0 + 2 * DAY_MS, [geo(TARGET)], {40007: crossing}, threshold_km=150.0)
+    (neighbour,) = found
+    assert len(neighbour.passes) >= 3
+    times = [t for t, _ in neighbour.passes]
+    assert times == sorted(times)
+    # Distinct passes, roughly half a day apart, each within reach.
+    assert all(b - a > 6 * 3_600_000 for a, b in itertools.pairwise(times))
+    assert all(km <= 150.0 + SGP4_UNCERTAINTY_KM for _, km in neighbour.passes)
+    # The closest pass is still the headline one.
+    assert (neighbour.tca_ms, neighbour.range_km) == min(neighbour.passes, key=lambda p: p[1])
+
+
+def test_two_refinements_of_one_pass_are_kept_once_at_the_closer_distance() -> None:
+    from lightbee.analysis.screen import _distinct_passes
+
+    minute = 60_000
+    assert _distinct_passes([(10 * minute, 50.0), (0, 60.0), (200 * minute, 70.0)]) == [
+        (10 * minute, 50.0),
+        (200 * minute, 70.0),
+    ]
+    assert _distinct_passes([]) == []
