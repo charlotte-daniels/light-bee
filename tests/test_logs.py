@@ -469,7 +469,9 @@ def test_a_line_stays_under_64_kib_and_keeps_the_required_fields() -> None:
         REQUEST_FIELDS.reset(fields_token)
         REQUEST_ID_VAR.reset(id_token)
     assert len(text.encode()) < 64 * 1024
-    (line,) = lines(text)
+    # Parsed directly: a hand-built record has no function name, which `lines` refuses.
+    line = json.loads(text)
+    assert set(line) == FIELDS
     attributes = line["attributes"]
     assert attributes[ID_KEY] == "rq-long"
     assert attributes["user_agent.original"] == "a" * 256
