@@ -130,6 +130,7 @@ _JAVASCRIPT_VARIANTS: Final = {
 }
 _S6819_STATUS: Final = '<p id="progress" role="status" aria-live="polite"></p>\n'
 _S6819_IMG: Final = '<div id="plot" role="img" aria-label="figure"></div>\n'
+_S6850_EMPTY: Final = '<h2 id="board-headline" class="board-headline"></h2>\n'
 _PLANTED_HTML_MARKER: Final = "<!-- to" + "do: tidy -->\n"
 
 
@@ -600,6 +601,11 @@ PLANTS: Final = (
         "sonar_html",
         "S6819 role=img on a plot container",
         lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6819_IMG),
+    ),
+    Plant(
+        "sonar_html",
+        "S6850 an empty heading a script fills later",
+        lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6850_EMPTY),
     ),
 )
 

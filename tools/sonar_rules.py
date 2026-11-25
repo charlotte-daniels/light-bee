@@ -107,6 +107,7 @@ NATIVE_ROLES: Final = frozenset(
     }
 )
 _ROLE: Final = re.compile(r"""\brole\s*=\s*["']?([A-Za-z]+)""")
+_EMPTY_HEADING: Final = re.compile(r"<h([1-6])\b[^>]*>\s*</h\1\s*>", re.IGNORECASE)
 
 
 def _docstrings(tree: ast.AST) -> set[int]:
@@ -331,10 +332,16 @@ def javascript_problems(path: Path, text: str) -> list[str]:
 
 
 def html_problems(path: Path, text: str) -> list[str]:
-    """Web:S6819."""
+    """Web:S6819, and Web:S6850 (a heading with no content, even one a script fills
+    later: the 1.4.0 upload failed on an empty board headline)."""
+    lines = text.splitlines()
     return [
         f"{path}:{number} S6819 role={role!r} has a native element"
-        for number, line in enumerate(text.splitlines(), start=1)
+        for number, line in enumerate(lines, start=1)
         for role in _ROLE.findall(line)
         if role.lower() in NATIVE_ROLES
+    ] + [
+        f"{path}:{number} S6850 heading has no content"
+        for number, line in enumerate(lines, start=1)
+        if _EMPTY_HEADING.search(line)
     ]
