@@ -271,12 +271,21 @@ def test_every_pass_of_a_neighbour_is_kept_not_only_the_closest() -> None:
     assert (neighbour.tca_ms, neighbour.range_km) == min(neighbour.passes, key=lambda p: p[1])
 
 
-def test_two_refinements_of_one_pass_are_kept_once_at_the_closer_distance() -> None:
-    from lightbee.analysis.screen import _distinct_passes
+def test_dips_count_as_separate_passes_only_when_the_range_opens_between_them() -> None:
+    from lightbee.analysis.screen import PASS_RISE_KM, _distinct_passes
 
     minute = 60_000
-    assert _distinct_passes([(10 * minute, 50.0), (0, 60.0), (200 * minute, 70.0)]) == [
+    times = np.arange(0, 400 * minute, 5 * minute, dtype=np.int64)
+    # A crossing: the range opens to 300 km between two dips half a day apart.
+    opened = np.full(times.size, 300.0)
+    assert _distinct_passes([(10 * minute, 50.0), (200 * minute, 70.0)], times, opened) == [
         (10 * minute, 50.0),
         (200 * minute, 70.0),
     ]
-    assert _distinct_passes([]) == []
+    # A co-located wobble: the range never opens by PASS_RISE_KM, so one encounter,
+    # kept at its closest; two refinements of one pass likewise.
+    wobble = np.full(times.size, 60.0 + PASS_RISE_KM / 2)
+    dips = [(10 * minute, 60.0), (70 * minute, 55.0), (130 * minute, 58.0)]
+    assert _distinct_passes(dips, times, wobble) == [(70 * minute, 55.0)]
+    assert _distinct_passes([(0, 60.0), (5 * minute, 50.0)], times, opened) == [(5 * minute, 50.0)]
+    assert _distinct_passes([], times, opened) == []

@@ -62,6 +62,9 @@ COARSE_STEP_MS: Final = 5 * 60_000
 REFINE_STEP_MS: Final = 10_000
 FINE_STEP_MS: Final = 100
 REFINE_HALF_WIDTH_MS: Final = 15 * 60_000
+# Two dips in a neighbour's distance are separate passes only if it opens by
+# this much between them; less is one long encounter, not two.
+PASS_RISE_KM: Final = 25.0
 MAX_REFINEMENTS: Final = 20  # local minima refined per neighbour
 MAX_APPROACH_WINDOW_MS: Final = 31 * 86_400_000
 # Far above the roughly 900 GEO objects seen live, so it only trips on a reply
@@ -310,15 +313,22 @@ class Approach:
     passes: tuple[tuple[int, float], ...] = ()
 
 
-def _distinct_passes(found: list[tuple[int, float]]) -> list[tuple[int, float]]:
-    """Passes in time order, two refinements of one pass (closer in time than a
-    refine window) kept once, at the closer distance."""
+def _distinct_passes(
+    found: list[tuple[int, float]], times: IntArray, track: FloatArray
+) -> list[tuple[int, float]]:
+    """Passes in time order. Two dips count as separate passes only when the
+    coarse distance rises at least PASS_RISE_KM above both between them; a
+    co-located neighbour wobbling at a near-constant range is one encounter,
+    kept once at its closest."""
     kept: list[tuple[int, float]] = []
     for tca, distance in sorted(found):
-        if kept and tca - kept[-1][0] < REFINE_HALF_WIDTH_MS:
-            if distance < kept[-1][1]:
-                kept[-1] = (tca, distance)
-            continue
+        if kept:
+            between = track[(times > kept[-1][0]) & (times < tca)]
+            rise = float(np.nanmax(between)) if between.size else -np.inf
+            if rise - max(distance, kept[-1][1]) < PASS_RISE_KM:
+                if distance < kept[-1][1]:
+                    kept[-1] = (tca, distance)
+                continue
         kept.append((tca, distance))
     return kept
 
@@ -358,7 +368,7 @@ def approaches(
                 min(end_ms, centre + REFINE_HALF_WIDTH_MS),
             )
             refined_passes.append(_refine(item, targets, *span))
-        within = _distinct_passes([p for p in refined_passes if p[1] <= reach])
+        within = _distinct_passes([p for p in refined_passes if p[1] <= reach], times, row)
         if within:
             tca, distance = min(within, key=lambda p: p[1])
             inside = distance <= threshold
