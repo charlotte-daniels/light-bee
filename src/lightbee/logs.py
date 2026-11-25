@@ -8,12 +8,18 @@ INFO 9, WARN 13, ERROR 17, FATAL 21), `body` (a string) and `attributes` (a
 flat object with OpenTelemetry keys). `trace_id` and `span_id` are optional
 and not used here.
 
-Lines written while a request is handled carry its `X-Request-Id` and the
-platform gateway's `X-Auth-Request-Email` as attributes, through context
-variables set by `RequestContext`. A background run copies the context of the
-request that started it, so its lines carry the same request ID.
+Lines written while a request is handled carry its `X-Request-Id`, the
+platform gateway's `X-Auth-Request-Email`, its path (never the query string),
+method and `User-Agent` as attributes, through context variables set by
+`RequestContext`. A background run copies the context of the request that
+started it, so its lines carry the same request fields. One audit line per
+completed request adds the status, `event.outcome` and, when a route matched,
+`http.route` (the platform's requirement as reported on DRIFTER's 2.0.3
+upload, 25 November 2026; ported from DRIFTER).
 
-What never reaches a line: header values other than those two, cookies,
+Every line stays under 64 KiB: long values are cut, the required fields never.
+
+What never reaches a line: header values other than those three, cookies,
 tokens, UDL credentials, query strings. Nothing names the service, tenant or
 app: the platform adds those.
 """
@@ -46,6 +52,33 @@ REQUEST_ID: Final[contextvars.ContextVar[str | None]] = contextvars.ContextVar(
 USER_EMAIL: Final[contextvars.ContextVar[str | None]] = contextvars.ContextVar(
     "lightbee_user_email", default=None
 )
+# Every line written while a request is handled names the request: its path
+# (never the query string), method and user agent, as the standard requires.
+REQUEST_FIELDS: Final[contextvars.ContextVar[dict[str, str] | None]] = contextvars.ContextVar(
+    "lightbee_request_fields", default=None
+)
+
+# A line must stay under 64 KiB; long values are cut, required fields never.
+# Each required field is bounded where it is cleaned (256 characters at most),
+# so these caps never reach one. A value can grow up to sixfold when escaped
+# (ensure_ascii writes a non-ASCII character as \uXXXX), so the encoded line
+# is measured too and the longest cuttable value halved until it fits.
+MAX_VALUE_CHARS: Final = 16_000
+MAX_BODY_CHARS: Final = 8_000
+MAX_LINE_BYTES: Final = 60 * 1024
+REQUIRED_ATTRIBUTES: Final = frozenset(
+    {
+        REQUEST_ID_ATTRIBUTE,
+        USER_EMAIL_ATTRIBUTE,
+        "url.path",
+        "http.request.method",
+        "user_agent.original",
+        "http.response.status_code",
+        "event.outcome",
+        "http.route",
+    }
+)
+_CUT_MARK: Final = "...[cut]"
 
 # Python level floor to the OpenTelemetry pair; a level between two takes the lower.
 _SEVERITIES: Final = (
@@ -107,6 +140,10 @@ class JsonFormatter(logging.Formatter):
         email = USER_EMAIL.get()
         if email is not None:
             attributes[USER_EMAIL_ATTRIBUTE] = email
+        fields = REQUEST_FIELDS.get()
+        if fields is not None:
+            for key, value in fields.items():
+                attributes.setdefault(key, value)
         if record.exc_info and record.exc_info[0] is not None:
             kind, error, trace = record.exc_info
             attributes[EXCEPTION_TYPE] = kind.__qualname__
@@ -119,10 +156,47 @@ class JsonFormatter(logging.Formatter):
             "timestamp": stamp.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "severity_text": text,
             "severity_number": number,
-            "body": record.getMessage(),
-            "attributes": attributes,
+            "body": _cut(record.getMessage(), MAX_BODY_CHARS),
+            "attributes": {
+                key: _cut(value, MAX_VALUE_CHARS) if isinstance(value, str) else value
+                for key, value in attributes.items()
+            },
         }
-        return json.dumps(line, ensure_ascii=True, separators=(",", ":"))
+        return _fit(line)
+
+
+def _cut(value: str, limit: int) -> str:
+    """The value, or its first characters and a mark when it is longer than the limit."""
+    return value if len(value) <= limit else value[: max(limit - len(_CUT_MARK), 0)] + _CUT_MARK
+
+
+def _encode(line: Mapping[str, object]) -> str:
+    return json.dumps(line, ensure_ascii=True, separators=(",", ":"))
+
+
+def _fit(line: dict[str, Any]) -> str:
+    """The line as JSON, its longest cuttable value halved until it is under the cap.
+
+    ensure_ascii makes the text pure ASCII, so its length is its size in bytes.
+    The body and every attribute outside `REQUIRED_ATTRIBUTES` may be cut.
+    """
+    text = _encode(line)
+    attributes: dict[str, Any] = line["attributes"]
+    while len(text) >= MAX_LINE_BYTES:
+        cuttable = [
+            (len(value), key)
+            for key, value in attributes.items()
+            if isinstance(value, str) and key not in REQUIRED_ATTRIBUTES
+        ]
+        longest, key = max(cuttable, default=(0, ""))
+        if len(line["body"]) >= longest and len(line["body"]) > len(_CUT_MARK):
+            line["body"] = _cut(line["body"], len(line["body"]) // 2)
+        elif longest > len(_CUT_MARK):
+            attributes[key] = _cut(attributes[key], longest // 2)
+        else:
+            break  # nothing left to cut; cannot happen with the bounded required fields
+        text = _encode(line)
+    return text
 
 
 class StdoutHandler(logging.StreamHandler[TextIO]):
@@ -235,9 +309,33 @@ def clean_email(raw: str | None) -> str | None:
     return None
 
 
-# The five probe paths and static files are not logged: probes arrive every
-# few seconds and touch nothing, and the page and its assets say nothing an
-# operator needs.
+_AGENT_SHAPE: Final = re.compile(r"[\x20-\x7e]{1,256}")
+
+
+def clean_user_agent(raw: str | None) -> str:
+    """The client's User-Agent, printable and bounded; "unknown" otherwise.
+
+    Always present, because the standard requires it on every request line.
+    """
+    if raw is not None:
+        value = raw.strip()[:256]
+        if _AGENT_SHAPE.fullmatch(value):
+            return value
+    return "unknown"
+
+
+def outcome(status: int) -> str:
+    """The OpenTelemetry `event.outcome` for a response status (0: none was sent)."""
+    if status == 0:
+        return "unknown"
+    return "success" if status < 400 else "failure"
+
+
+# The five probe paths and static files are not logged when they arrive
+# untagged: probes come every few seconds and touch nothing, and the page and
+# its assets say nothing an operator needs. A request that carries an
+# X-Request-Id is always logged, wherever it goes, because someone (the
+# platform's logging check, an operator tracing a call) asked to follow it.
 QUIET_PATHS: Final = frozenset({"/", "/healthz", "/livez", "/readyz", "/ping"})
 QUIET_PREFIX: Final = "/static/"
 MAX_PATH_CHARS: Final = 256
@@ -263,8 +361,10 @@ def _single_header(scope: Scope, name: bytes) -> str | None:
 class RequestContext:
     """Outermost ASGI middleware: request ID and email in context, one line per request.
 
-    The line names the method, the path (never the query string), the status
-    and the time taken. Probes and static files are not logged.
+    Every line written while the request is handled names its method, path
+    (never the query string) and user agent. The one audit line per request
+    adds the status, `event.outcome`, the matched route and the time taken.
+    Untagged probes and static files are not logged.
     """
 
     def __init__(self, app: App) -> None:
@@ -279,7 +379,14 @@ class RequestContext:
         id_token = REQUEST_ID.set(clean_request_id(request_id))
         email_token = USER_EMAIL.set(clean_email(email))
         path = str(scope.get("path", ""))
-        quiet = path in QUIET_PATHS or path.startswith(QUIET_PREFIX)
+        fields_token = REQUEST_FIELDS.set(
+            {
+                "url.path": path[:MAX_PATH_CHARS],
+                "http.request.method": str(scope.get("method", ""))[:16],
+                "user_agent.original": clean_user_agent(_single_header(scope, b"user-agent")),
+            }
+        )
+        quiet = request_id is None and (path in QUIET_PATHS or path.startswith(QUIET_PREFIX))
         status = 0
         started = time.perf_counter()
 
@@ -294,16 +401,16 @@ class RequestContext:
         finally:
             if not quiet:
                 elapsed = round((time.perf_counter() - started) * 1000, 1)
-                _HTTP.info(
-                    "request",
-                    extra={
-                        "attributes": {
-                            "http.request.method": str(scope.get("method", ""))[:16],
-                            "url.path": path[:MAX_PATH_CHARS],
-                            "http.response.status_code": status,
-                            "lightbee.duration_ms": elapsed,
-                        }
-                    },
-                )
+                audit: dict[str, object] = {
+                    "event.name": "http.request.completed",
+                    "http.response.status_code": status,
+                    "event.outcome": outcome(status),
+                    "lightbee.duration_ms": elapsed,
+                }
+                route = getattr(scope.get("route"), "path", None)
+                if isinstance(route, str):
+                    audit["http.route"] = route[:MAX_PATH_CHARS]
+                _HTTP.info("request", extra={"attributes": audit})
+            REQUEST_FIELDS.reset(fields_token)
             USER_EMAIL.reset(email_token)
             REQUEST_ID.reset(id_token)

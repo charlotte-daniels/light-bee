@@ -30,14 +30,18 @@ from lightbee.__main__ import server_options
 from lightbee.config import Settings
 from lightbee.logs import (
     LOG_CONFIG,
+    REQUEST_FIELDS,
     JsonFormatter,
     StdoutHandler,
     clean_email,
     clean_request_id,
+    clean_user_agent,
     configure_logging,
     flatten,
+    outcome,
     severity,
 )
+from lightbee.logs import REQUEST_ID as REQUEST_ID_VAR
 from lightbee.web.app import create_app
 from lightbee.web.session import COOKIE_NAME
 from tests.fake_world import NOW, PASSWORD, TARGET, USERNAME, factory, world
@@ -342,6 +346,7 @@ def test_request_lines_carry_the_request_id_and_email_and_no_credential(
         client.get(f"/api/runs/{run['id']}/flag?basis=normalised", headers=HEADERS)
         client.get("/api/session", headers={"X-Request-Id": "bad id with spaces"})
         client.get("/healthz", headers=HEADERS)
+        client.get("/healthz")
     out, err = capsys.readouterr()
     assert err == ""
     parsed = lines(out)
@@ -350,7 +355,7 @@ def test_request_lines_carry_the_request_id_and_email_and_no_credential(
     for line in requests:
         attributes = line["attributes"]
         assert ID_KEY in attributes
-        assert attributes["url.path"].startswith("/api/")
+        assert attributes["url.path"].startswith("/api/") or attributes["url.path"] == "/healthz"
         assert "?" not in attributes["url.path"]
     tagged = [line for line in requests if line["attributes"][ID_KEY] == REQUEST_ID]
     assert tagged
@@ -362,9 +367,114 @@ def test_request_lines_carry_the_request_id_and_email_and_no_credential(
     assert audit[-1]["attributes"][EMAIL_KEY] == EMAIL
     # An unusable request ID is replaced, never copied into the log.
     assert "bad id with spaces" not in out
-    # Probes are not logged.
-    assert all(line["attributes"]["url.path"] != "/healthz" for line in requests)
+    # A probe is logged only when it carries a request ID.
+    probes = [line for line in requests if line["attributes"]["url.path"] == "/healthz"]
+    assert [line["attributes"][ID_KEY] for line in probes] == [REQUEST_ID]
     for secret in (PASSWORD, token, token[:16], cookie or "missing-cookie", USERNAME):
         assert secret not in out
     for forbidden in ("authorization", "cookie", "basis=", "satNo", "service.name"):
         assert forbidden not in out.lower()
+
+
+def test_requests_carry_the_request_id_and_email_but_probes_do_not_log(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mirrors DRIFTER's test: a tagged request is logged anywhere, even to `/`."""
+    app = create_app(Settings())
+    capsys.readouterr()
+    with TestClient(app, base_url="https://testserver") as client:
+        client.get(
+            "/api/session?secret=QSTRSECRET",
+            headers={
+                "X-Request-Id": "req-one",
+                "X-Auth-Request-Email": EMAIL,
+                "Authorization": "Basic Zm9vOmJhcg==",
+            },
+        )
+        client.get("/", headers={"X-Request-Id": "req-two"})
+        client.get("/healthz")
+        client.get("/static/app.js")
+    out, err = capsys.readouterr()
+    assert err == ""
+    parsed = lines(out)
+    ids = [line["attributes"].get(ID_KEY) for line in parsed]
+    assert "req-one" in ids
+    assert "req-two" in ids
+    one = next(line for line in parsed if line["attributes"].get(ID_KEY) == "req-one")
+    attributes = one["attributes"]
+    assert attributes[EMAIL_KEY] == EMAIL
+    assert attributes["url.path"] == "/api/session"
+    assert attributes["http.request.method"] == "GET"
+    assert attributes["user_agent.original"] == "testclient"
+    assert attributes["event.outcome"] == "success"
+    assert attributes["http.response.status_code"] == 200
+    assert attributes["http.route"] == "/api/session"
+    two = next(line for line in parsed if line["attributes"].get(ID_KEY) == "req-two")
+    assert two["attributes"]["http.route"] == "/"
+    assert "QSTRSECRET" not in out
+    assert "Zm9vOmJhcg" not in out
+    quiet = {"/healthz", "/static/app.js"}
+    assert not any(line["attributes"].get("url.path") in quiet for line in parsed)
+
+
+def test_every_request_line_names_the_request_and_lines_stay_short(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mirrors DRIFTER's test for the 2.0.3 advisory: user_agent.original was missing."""
+    app = create_app(Settings())
+    capsys.readouterr()
+    with TestClient(app, base_url="https://testserver") as client:
+        client.get("/api/runs/no-such-run", headers={"X-Request-Id": "rq-401"})
+        client.get("/api/session", headers={"X-Request-Id": "rq-agent", "User-Agent": "probe/1.0"})
+        client.get("/api/session", headers={"X-Request-Id": "rq-none", "User-Agent": "bad\x7f"})
+    parsed = lines(capsys.readouterr().out)
+    tagged = [line for line in parsed if line["attributes"].get(ID_KEY) == "rq-401"]
+    assert tagged
+    for line in tagged:
+        attributes = line["attributes"]
+        assert attributes["url.path"] == "/api/runs/no-such-run"
+        assert attributes["http.request.method"] == "GET"
+        assert attributes["user_agent.original"] == "testclient"
+    audit = tagged[-1]["attributes"]
+    assert audit["event.outcome"] == "failure"
+    assert audit["http.response.status_code"] == 401
+    assert audit["http.route"] == "/api/runs/{run_id}"
+    agents = {
+        line["attributes"][ID_KEY]: line["attributes"]["user_agent.original"]
+        for line in parsed
+        if line["attributes"].get(ID_KEY) in ("rq-agent", "rq-none")
+    }
+    assert agents == {"rq-agent": "probe/1.0", "rq-none": "unknown"}
+    assert clean_user_agent(None) == "unknown"
+    assert outcome(0) == "unknown"
+    assert outcome(302) == "success"
+    assert REQUEST_FIELDS.get() is None, "context reset after the request"
+
+
+def test_a_line_stays_under_64_kib_and_keeps_the_required_fields() -> None:
+    """Long values are cut, never the request fields, even when escaping inflates them."""
+    fields = {
+        "url.path": "/api/x",
+        "http.request.method": "GET",
+        "user_agent.original": "a" * 256,
+    }
+    id_token = REQUEST_ID_VAR.set("rq-long")
+    fields_token = REQUEST_FIELDS.set(fields)
+    try:
+        long_record = record(logging.INFO, "x" * 100_000)
+        # Non-ASCII grows sixfold when escaped: 15,000 characters become 90 KB.
+        long_record.attributes = {"lightbee.note": "é" * 15_000, "lightbee.other": "b" * 9}
+        text = JsonFormatter().format(long_record)
+    finally:
+        REQUEST_FIELDS.reset(fields_token)
+        REQUEST_ID_VAR.reset(id_token)
+    assert len(text.encode()) < 64 * 1024
+    (line,) = lines(text)
+    attributes = line["attributes"]
+    assert attributes[ID_KEY] == "rq-long"
+    assert attributes["user_agent.original"] == "a" * 256
+    assert attributes["url.path"] == "/api/x"
+    assert attributes["lightbee.other"] == "b" * 9
+    assert attributes["lightbee.note"].endswith("...[cut]")
+    assert line["body"].endswith("...[cut]")
+    assert len(line["body"]) <= 8_000
