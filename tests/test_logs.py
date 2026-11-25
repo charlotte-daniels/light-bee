@@ -34,6 +34,7 @@ from lightbee.logs import (
     JsonFormatter,
     StdoutHandler,
     clean_email,
+    clean_path,
     clean_request_id,
     clean_user_agent,
     configure_logging,
@@ -480,3 +481,61 @@ def test_a_line_stays_under_64_kib_and_keeps_the_required_fields() -> None:
     assert attributes["lightbee.note"].endswith("...[cut]")
     assert line["body"].endswith("...[cut]")
     assert len(line["body"]) <= 8_000
+
+
+def _format_in_a_request(created: logging.LogRecord) -> dict[str, Any]:
+    fields = {"url.path": "/api/x", "http.request.method": "GET", "user_agent.original": "ua"}
+    id_token = REQUEST_ID_VAR.set("rq-fit")
+    fields_token = REQUEST_FIELDS.set(fields)
+    try:
+        text = JsonFormatter().format(created)
+    finally:
+        REQUEST_FIELDS.reset(fields_token)
+        REQUEST_ID_VAR.reset(id_token)
+    assert len(text.encode()) < 64 * 1024
+    line: dict[str, Any] = json.loads(text)
+    assert set(line) == FIELDS
+    return line
+
+
+def test_a_body_that_overflows_only_once_escaped_is_cut() -> None:
+    created = record(logging.INFO, "é" * 8_000)
+    created.attributes = {"lightbee.note": "é" * 5_000}
+    line = _format_in_a_request(created)
+    assert line["body"].endswith("...[cut]")
+    assert line["attributes"][ID_KEY] == "rq-fit"
+
+
+def test_many_short_attributes_keep_only_the_required_fields() -> None:
+    created = record(logging.INFO, "short")
+    created.attributes = {f"lightbee.a{n}": "é" * 8 for n in range(5_000)}
+    attributes = _format_in_a_request(created)["attributes"]
+    assert attributes["lightbee.attributes_dropped"] is True
+    assert attributes[ID_KEY] == "rq-fit"
+    assert attributes["url.path"] == "/api/x"
+    assert not any(key.startswith("lightbee.a") for key in attributes)
+
+
+def test_a_caller_cannot_replace_or_inflate_a_request_field() -> None:
+    created = record(logging.INFO, "m")
+    created.attributes = {
+        "url.path": "/evil?q=QSTRSECRET",
+        "http.route": "é" * 16_000,
+        "lightbee.note": "é" * 16_000,
+    }
+    attributes = _format_in_a_request(created)["attributes"]
+    assert attributes["url.path"] == "/api/x"
+    assert len(attributes["http.route"]) <= 256
+
+
+def test_the_logged_path_is_printable_ascii(capsys: pytest.CaptureFixture[str]) -> None:
+    assert clean_path("/api/a\nb‮c") == "/api/a?b?c"
+    assert clean_path("/x" * 200) == ("/x" * 200)[:256]
+    app = create_app(Settings())
+    capsys.readouterr()
+    with TestClient(app, base_url="https://testserver") as client:
+        client.get("/api/%0A%E2%80%AE/x", headers={"X-Request-Id": "rq-path"})
+    (line,) = [
+        x for x in lines(capsys.readouterr().out) if x["attributes"].get(ID_KEY) == "rq-path"
+    ]
+    assert line["attributes"]["url.path"] == "/api/??/x"

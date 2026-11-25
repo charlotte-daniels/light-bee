@@ -176,6 +176,8 @@ echo "== vulnerability scan"
 if command -v grype >/dev/null; then
   grype -q --fail-on high "$tag" || fail "grype found a critical or high"
   echo "   grype: 0 critical, 0 high"
+# Unpinned on purpose: a local check that never ships, and the latest scanner
+# and database are what match the platform best.
 elif docker image inspect anchore/grype:latest >/dev/null 2>&1; then
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/grype:latest \
     -q --fail-on high "$tag" || fail "grype found a critical or high"

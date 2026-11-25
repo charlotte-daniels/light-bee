@@ -142,8 +142,8 @@ class JsonFormatter(logging.Formatter):
             attributes[USER_EMAIL_ATTRIBUTE] = email
         fields = REQUEST_FIELDS.get()
         if fields is not None:
-            for key, value in fields.items():
-                attributes.setdefault(key, value)
+            # Assigned, not defaulted: a caller's `extra` never replaces a request field.
+            attributes.update(fields)
         if record.exc_info and record.exc_info[0] is not None:
             kind, error, trace = record.exc_info
             attributes[EXCEPTION_TYPE] = kind.__qualname__
@@ -157,8 +157,12 @@ class JsonFormatter(logging.Formatter):
             "severity_text": text,
             "severity_number": number,
             "body": _cut(record.getMessage(), MAX_BODY_CHARS),
+            # A required key is bounded tighter: ours are at most 256 characters
+            # where cleaned, so this only touches one a caller put in `extra`.
             "attributes": {
-                key: _cut(value, MAX_VALUE_CHARS) if isinstance(value, str) else value
+                key: _cut(value, MAX_PATH_CHARS if key in REQUIRED_ATTRIBUTES else MAX_VALUE_CHARS)
+                if isinstance(value, str)
+                else value
                 for key, value in attributes.items()
             },
         }
@@ -194,7 +198,14 @@ def _fit(line: dict[str, Any]) -> str:
         elif longest > len(_CUT_MARK):
             attributes[key] = _cut(attributes[key], longest // 2)
         else:
-            break  # nothing left to cut; cannot happen with the bounded required fields
+            # Many short attributes and nothing long left to cut: keep only the
+            # required fields. Each is at most 256 characters, so eight escaped
+            # are under 13 KiB and this fits.
+            line["attributes"] = {
+                key: value for key, value in attributes.items() if key in REQUIRED_ATTRIBUTES
+            }
+            line["attributes"]["lightbee.attributes_dropped"] = True
+            return _encode(line)
         text = _encode(line)
     return text
 
@@ -324,6 +335,18 @@ def clean_user_agent(raw: str | None) -> str:
     return "unknown"
 
 
+_NOT_PRINTABLE: Final = re.compile(r"[^\x20-\x7e]")
+
+
+def clean_path(raw: str) -> str:
+    """The decoded path, bounded, with every character outside printable ASCII as `?`.
+
+    The path is on every request line, so a control character or a
+    bidirectional override in it must not reach a log viewer.
+    """
+    return _NOT_PRINTABLE.sub("?", raw[:MAX_PATH_CHARS])
+
+
 def outcome(status: int) -> str:
     """The OpenTelemetry `event.outcome` for a response status (0: none was sent)."""
     if status == 0:
@@ -381,7 +404,7 @@ class RequestContext:
         path = str(scope.get("path", ""))
         fields_token = REQUEST_FIELDS.set(
             {
-                "url.path": path[:MAX_PATH_CHARS],
+                "url.path": clean_path(path),
                 "http.request.method": str(scope.get("method", ""))[:16],
                 "user_agent.original": clean_user_agent(_single_header(scope, b"user-agent")),
             }
