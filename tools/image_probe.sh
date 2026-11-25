@@ -38,8 +38,9 @@ echo "== archive $(basename "$archive") ($(sha256sum "$archive" | cut -c1-16)...
 mkdir "$work/ctx"
 python3.12 -m zipfile -e "$archive" "$work/ctx"
 
-echo "== build (--pull, from the archive)"
-docker build -q --pull -t "$tag" "$work/ctx" >/dev/null
+echo "== build (--pull --no-cache, from the archive, as the platform builds it)"
+# No layer cache: a cached `apk upgrade` layer would hide OS fixes published since.
+docker build -q --pull --no-cache -t "$tag" "$work/ctx" >/dev/null
 size="$(docker image inspect "$tag" --format '{{.Size}}')"
 echo "   size $((size / 1000000)) MB"
 
