@@ -529,7 +529,8 @@ def test_a_caller_cannot_replace_or_inflate_a_request_field() -> None:
 
 
 def test_the_logged_path_is_printable_ascii(capsys: pytest.CaptureFixture[str]) -> None:
-    assert clean_path("/api/a\nb‮c") == "/api/a?b?c"
+    override = chr(0x202E)  # right-to-left override, built so the source stays plain
+    assert clean_path(f"/api/a\nb{override}c") == "/api/a?b?c"
     assert clean_path("/x" * 200) == ("/x" * 200)[:256]
     app = create_app(Settings())
     capsys.readouterr()
