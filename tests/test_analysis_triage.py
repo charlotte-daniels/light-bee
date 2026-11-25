@@ -358,3 +358,34 @@ def test_a_three_tenths_fade_still_shows_through_nightly_offsets() -> None:
         # A sensor whose 7 nights happen to scatter widely may miss it; the others do not.
         departing = sum(r.departs for r in rows)
         assert departing >= 2, (seed, [(r.name, r.scatter_mag) for r in rows])
+
+
+def test_a_short_baseline_uses_its_hourly_spread_alone() -> None:
+    """Fewer than 3 baseline nights: no nightly spread, but the hours still judge."""
+    full = photometry(dict.fromkeys(SENSORS, (1.0, 6.0, 0.5)))
+    short = full.take(full.epoch_ms >= A - 54 * HOUR_MS)  # two baseline nights
+    rows = sensor_rows(short, A)
+    assert all(r.scatter_mag is not None for r in rows)
+    assert all(r.departs for r in rows)
+
+
+def test_a_neighbour_with_no_track_in_the_strip_is_not_listed() -> None:
+    far = np.array([A - 10 * 86_400_000], dtype=np.int64)
+    gone = Approach(40002, int(far[0]), 50.0, True, False, far, np.array([50.0]), ())
+    assert passes_in_strip([gone], A, reach_km=237.0) == []
+
+
+def test_a_step_between_elsets_far_apart_says_its_timing_is_loose() -> None:
+    sparse = [
+        e for e in elsets(step_at_hours=3.0) if not ANCHOR <= e.epoch < ANCHOR + timedelta(hours=18)
+    ]
+    manoeuvre = card(made(found_elsets=sparse), "manoeuvre")
+    assert manoeuvre.state == "fits"
+    assert "so the timing is loose" in manoeuvre.body
+
+
+def test_the_season_card_does_not_fit_when_the_flag_departs_and_no_sensor_does() -> None:
+    season = card(
+        made(photometry(), the_flag=flag("departs", "Departs from the seasonal pattern")), "season"
+    )
+    assert season.state == "against"

@@ -1066,3 +1066,40 @@ def test_a_change_time_needs_a_window_of_at_least_three_days(fake: FakeUdl) -> N
         )
         assert response.status_code == 422
         assert "at least 3 days" in response.json()["error"]
+
+
+def test_the_board_is_built_once_however_often_it_is_asked_for(
+    fake: FakeUdl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from lightbee.web import runs as runs_module
+
+    built: list[int] = []
+    real = runs_module.board
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        built.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(runs_module, "board", counted)
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        body = {**RUN, "change_time": "06:00"}
+        run_id = test_client.post("/api/runs", json=body, headers=HEADERS).json()["id"]
+        run = test_client.app.state.sessions.get(test_client.cookies.get(COOKIE_NAME)).run  # type: ignore[attr-defined]
+        run.results.pop("_board", None)
+        built.clear()
+        found: list[Any] = []
+        threads = [
+            threading.Thread(target=lambda: found.append(runs_module.board_of(run)))
+            for _ in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(built) == 1
+        assert all(b is found[0] for b in found)
+        assert test_client.get(f"/api/runs/{run_id}/board").status_code == 200
+        assert len(built) == 1  # the route reuses the held board
