@@ -173,10 +173,12 @@ PY
 
 echo "== vulnerability scan"
 if command -v grype >/dev/null; then
-  grype -q --fail-on high "$tag" && echo "   grype: 0 critical, 0 high"
+  grype -q --fail-on high "$tag" || fail "grype found a critical or high"
+  echo "   grype: 0 critical, 0 high"
 elif docker image inspect anchore/grype:latest >/dev/null 2>&1; then
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock anchore/grype:latest \
-    -q --fail-on high "$tag" && echo "   grype: 0 critical, 0 high"
+    -q --fail-on high "$tag" || fail "grype found a critical or high"
+  echo "   grype: 0 critical, 0 high"
 else
   echo "SKIP  grype (not installed and no cached image)"
 fi
