@@ -131,6 +131,8 @@ _JAVASCRIPT_VARIANTS: Final = {
 _S6819_STATUS: Final = '<p id="progress" role="status" aria-live="polite"></p>\n'
 _S6819_IMG: Final = '<div id="plot" role="img" aria-label="figure"></div>\n'
 _S6850_EMPTY: Final = '<h2 id="board-headline" class="board-headline"></h2>\n'
+_S6850_SPLIT: Final = '<h2 id="board-headline">\n  \n</h2>\n'
+_S6850_HOLLOW: Final = '<h3><span class="mark"></span></h3>\n'
 _PLANTED_HTML_MARKER: Final = "<!-- to" + "do: tidy -->\n"
 
 
@@ -606,6 +608,16 @@ PLANTS: Final = (
         "sonar_html",
         "S6850 an empty heading a script fills later",
         lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6850_EMPTY),
+    ),
+    Plant(
+        "sonar_html",
+        "S6850 an empty heading split over two lines",
+        lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6850_SPLIT),
+    ),
+    Plant(
+        "sonar_html",
+        "S6850 a heading holding only an empty element",
+        lambda r: _write(r, "src/lightbee/web/static/planted.html", _S6850_HOLLOW),
     ),
 )
 

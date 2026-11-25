@@ -107,7 +107,8 @@ NATIVE_ROLES: Final = frozenset(
     }
 )
 _ROLE: Final = re.compile(r"""\brole\s*=\s*["']?([A-Za-z]+)""")
-_EMPTY_HEADING: Final = re.compile(r"<h([1-6])\b[^>]*>\s*</h\1\s*>", re.IGNORECASE)
+_HEADING: Final = re.compile(r"<h([1-6])\b[^>]*>(.*?)</h\1\s*>", re.IGNORECASE | re.DOTALL)
+_TAG: Final = re.compile(r"<[^>]*>")
 
 
 def _docstrings(tree: ast.AST) -> set[int]:
@@ -341,7 +342,9 @@ def html_problems(path: Path, text: str) -> list[str]:
         for role in _ROLE.findall(line)
         if role.lower() in NATIVE_ROLES
     ] + [
-        f"{path}:{number} S6850 heading has no content"
-        for number, line in enumerate(lines, start=1)
-        if _EMPTY_HEADING.search(line)
+        # Across lines, and with tags removed: a heading split over two lines,
+        # or holding only an empty element, is just as empty.
+        f"{path}:{text.count(chr(10), 0, found.start()) + 1} S6850 heading has no content"
+        for found in _HEADING.finditer(text)
+        if not _TAG.sub("", found.group(2)).strip()
     ]
