@@ -352,7 +352,11 @@ def neighbourhood(
     data = run.data
     if data is None and run.released:
         raise RunReleasedError
-    if run.stage != "done" or data is None:
+    # Ready once the close approaches are screened and named, while the rest of
+    # the history is still being read: the scan needs only elsets and the snapshot.
+    with run.lock:
+        screened = "causes" in run.results
+    if not screened or data is None:
         raise ApiError(409, waiting)
     start_ms, end_ms = run.window_ms()
     if any(not start_ms <= t <= end_ms for t in body.times_ms):

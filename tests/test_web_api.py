@@ -648,8 +648,41 @@ def test_the_flag_is_published_before_the_elsets_are_read(
         run = test_client.post("/api/runs", json=RUN, headers=HEADERS).json()
         state = test_client.get(f"/api/runs/{run['id']}").json()
         assert state["stage"] == "failed"
-        assert "seasonal" in state["ready"]
+        assert "flag" in state["ready"]
         assert test_client.get(f"/api/runs/{run['id']}/flag").status_code == 200
+
+
+def test_other_causes_and_the_scan_are_ready_before_the_rest_of_the_history(
+    fake: FakeUdl, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The history is 73 to 82% of a run, so it is read last; if it then fails,
+    the flag, the close approaches and the scan still stand."""
+    from lightbee.udl.client import UdlError
+    from lightbee.web import runs as runs_module
+
+    seen: list[set[str]] = []
+
+    def history_fails(run: Any, *args: Any, **kwargs: Any) -> None:
+        with run.lock:
+            seen.append(set(run.results))
+        raise UdlError("held back for the test")
+
+    monkeypatch.setattr(runs_module, "_read_history", history_fails)
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        run = test_client.post("/api/runs", json=RUN, headers=HEADERS).json()
+        state = test_client.get(f"/api/runs/{run['id']}").json()
+        assert state["stage"] == "failed"
+        assert seen
+        assert {"flag", "approaches", "causes"} <= seen[0]
+        assert "seasonal" not in seen[0]  # the heatmap waits for the history
+        assert test_client.get(f"/api/runs/{run['id']}/figures/causes").status_code == 200
+        start = int(NOW.timestamp() * 1000) - 2 * 86_400_000
+        scanned = test_client.post(
+            f"/api/runs/{run['id']}/scan", json={"times_ms": [start]}, headers=HEADERS
+        )
+        assert scanned.status_code == 200, scanned.text
+        assert scanned.json()["neighbours"]
 
 
 def test_an_object_with_no_photometry_finishes_cold_and_warm(fake: FakeUdl) -> None:

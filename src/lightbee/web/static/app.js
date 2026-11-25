@@ -213,11 +213,18 @@ async function drawWhatIsReady(run) {
     await drawFlag();
     state.drawn.add('seasonal');
   }
-  if (run.stage === 'done' && !state.drawn.has('done')) {
+  // Other Causes and the scan come before the rest of the history is read.
+  if (ready.has('causes') && !state.drawn.has('causes')) {
     await drawCauses();
-    state.drawn.add('done');
+    state.drawn.add('causes');
     $('scan-button').disabled = false;
     presetScanRange();
+  }
+  // Drawn again once the history is in, for ghost years and the final marking,
+  // unless the analyst has already scanned (a redraw would clear the selection).
+  if (run.stage === 'done' && !state.drawn.has('done')) {
+    if (!state.drawn.has('scanned') || $('ghost-years').checked) await drawCauses();
+    state.drawn.add('done');
   }
 }
 
@@ -342,7 +349,7 @@ async function selected(event) {
 }
 
 async function scan(times) {
-  if (!times.length || state.run?.stage !== 'done') return;
+  if (!times.length || !state.drawn.has('causes')) return;
   const threshold = scanThreshold();
   if (threshold === null) { fieldError('threshold', 'The screening distance must be 1 to 2,000 km.'); return; }
   $('progress').textContent = `Scanning ${times.length.toLocaleString('en-GB')} selected observations…`;
@@ -352,6 +359,7 @@ async function scan(times) {
     // The scan may have read names too: the page and the CSV carry its marking.
     if (typeof result.marking === 'string' && result.marking) setMarking(result.marking);
     showScan(result);
+    state.drawn.add('scanned');
     $('progress').textContent = progressText(state.run);
   } catch (error) {
     $('progress').textContent = `Scan failed: ${error.message}`;
@@ -465,7 +473,7 @@ async function basisChanged() {
   try {
     await drawSeasonal();
     await drawFlag();
-    if (state.drawn.has('done')) await drawCauses();
+    if (state.drawn.has('causes')) await drawCauses();
   } catch (error) {
     $('progress').textContent = error.message;
   }
@@ -474,7 +482,7 @@ async function basisChanged() {
 // Ghost years are redrawn from the history the run already holds; the UDL is
 // not read again. The choice stays for every later draw and run.
 async function ghostsChanged() {
-  if (!state.run || !state.drawn.has('done')) return;
+  if (!state.run || !state.drawn.has('causes')) return;
   try {
     await drawCauses();
     // The live status line tells a screen reader the redraw happened.

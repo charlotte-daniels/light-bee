@@ -9,7 +9,7 @@ import {
 
 test('progress text names the stage and never shows raw values as HTML', () => {
   assert.equal(progressText({ stage: 'history', records: 12345, seconds: 75 }),
-    'Flag ready; reading the rest of two years of history for the heatmap, 12,345 observations so far (1 min 15 s).');
+    'Flag and Other Causes ready; reading the rest of two years of history for the heatmap, 12,345 observations so far (1 min 15 s).');
   assert.equal(progressText({ stage: 'seasons', records: 0, seconds: 5 }),
     'Reading the same season in earlier years for the flag (5 s).');
   assert.equal(progressText({ stage: 'done', seconds: 4, warm: true }),

@@ -3,9 +3,11 @@
 A run reads in stages so the analyst sees something early: the recent weeks
 first (the top panel and the light curve), then the same season in each
 earlier year (all the seasonal flag needs, so it is published at once), then
-the rest of two years of history (the heatmap), then the target's elsets and
-a GEO snapshot (the orbital panels and close approaches). The browser polls
-the run's state.
+the target's elsets and a GEO snapshot, screened at once with the close
+approaches named (Other Causes and the scan are usable from here), and last
+the rest of two years of history (the heatmap). The history was 73 to 82% of
+each run measured on the owner's known events, so it goes last. The browser
+polls the run's state.
 
 Each run has its own UDL client and throttle, so a failed run's requests still
 in flight can never take slots from the next. A session runs one job at a time,
@@ -26,6 +28,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final, Literal
@@ -72,11 +75,11 @@ Stage = Literal[
     "queued",
     "recent",
     "seasons",
-    "history",
     "elsets",
     "catalogue",
     "screening",
     "names",
+    "history",
     "done",
     "failed",
 ]
@@ -303,36 +306,63 @@ def _execute(
     if not (reuse and not need_elsets and not need_catalogue):
         with make_client(credentials) as client:
             if not reuse:
-                _read_photometry(run, client, data, now)
-            run.check()
-            if need_elsets:
-                run.set(stage="elsets")
-                data.elsets = read_elsets(
-                    client,
-                    request.sat_no,
-                    (_utc(elset_span[0]), _utc(elset_span[1])),
-                    source=request.provider,
-                )
-                data.elset_span = elset_span
-            run.check()
-            if need_catalogue:
-                run.set(stage="catalogue")
-                data.catalogue, data.catalogue_tally = read_geo_catalogue(
-                    client, _utc((window_start + end) // 2), source=request.provider
-                )
-                data.catalogue_span = (window_start, end)
-    run.set(stage="screening")
+                _read_early(run, client, data, now)
+            _read_orbit(run, client, data, elset_span if need_elsets else None, need_catalogue)
+            _screen(run, data, lambda: nullcontext(client))
+            if not reuse:
+                _read_history(run, client, data, now)
+    else:
+        _screen(run, data, lambda: make_client(credentials))
     # An object with no photometry still publishes its (empty) panel.
     if data.photometry is not None:
         _publish(run, "recent", _series(data, data.photometry, "auto"))
     analysis(run, "auto")
-    run.check()
-    _publish_orbit(run, data)
-    _name_approaches(run, data, lambda: make_client(credentials))
     return data
 
 
-def _name_approaches(run: Run, data: RunData, open_client: Callable[[], UdlReadClient]) -> None:
+def _read_orbit(
+    run: Run,
+    client: UdlReadClient,
+    data: RunData,
+    elset_span: tuple[int, int] | None,
+    need_catalogue: bool,
+) -> None:
+    """The target's elsets over this span, and the GEO snapshot if it is needed."""
+    request = run.request
+    run.check()
+    if elset_span is not None:
+        run.set(stage="elsets")
+        data.elsets = read_elsets(
+            client,
+            request.sat_no,
+            (_utc(elset_span[0]), _utc(elset_span[1])),
+            source=request.provider,
+        )
+        data.elset_span = elset_span
+    run.check()
+    if need_catalogue:
+        window_start, end = run.window_ms()
+        run.set(stage="catalogue")
+        data.catalogue, data.catalogue_tally = read_geo_catalogue(
+            client, _utc((window_start + end) // 2), source=request.provider
+        )
+        data.catalogue_span = (window_start, end)
+
+
+def _screen(
+    run: Run, data: RunData, open_client: Callable[[], AbstractContextManager[UdlReadClient]]
+) -> None:
+    """Close approaches, named, then Other Causes and the scan are ready."""
+    run.check()
+    run.set(stage="screening")
+    _publish_orbit(run, data)
+    _name_approaches(run, data, open_client)
+    _publish(run, "causes", True)
+
+
+def _name_approaches(
+    run: Run, data: RunData, open_client: Callable[[], AbstractContextManager[UdlReadClient]]
+) -> None:
     """Names for the target and its close approaches only: one small read, after screening.
 
     Names are display text, so only the objects on screen are named; a scan
@@ -412,27 +442,40 @@ def _utc(ms: int) -> datetime:
     return datetime.fromtimestamp(ms / 1000, UTC)
 
 
-def _read_photometry(run: Run, client: UdlReadClient, data: RunData, now: datetime) -> None:
+def _photometry_spans(run: Run, data: RunData) -> tuple[datetime, datetime, datetime]:
+    """The end, the start of the recent weeks and the start of the history."""
     request = run.request
     end = _utc(data.end_ms)
     recent_start = end - timedelta(days=max(RECENT_DAYS, request.window_days))
     history_start = end - timedelta(days=round(365.25 * request.history_years))
+    return end, recent_start, history_start
+
+
+def _read_early(run: Run, client: UdlReadClient, data: RunData, now: datetime) -> None:
+    """The recent weeks, then the same season in earlier years: the flag."""
+    end, recent_start, history_start = _photometry_spans(run, data)
     run.set(stage="recent")
     data.photometry = read_observations(
-        client, request.sat_no, (recent_start, end), now=now, on_progress=_counter(run)
+        client, run.request.sat_no, (recent_start, end), now=now, on_progress=_counter(run)
     )
     _publish(run, "recent", Series.of(data.photometry))
     run.check()
     run.set(stage="seasons")
-    seasons, rest = history_spans(run.window_ms(), history_start, recent_start)
+    seasons, _ = history_spans(run.window_ms(), history_start, recent_start)
     _read_spans(run, client, data, seasons, now)
     data.seasons_complete = True
     run.check()
     flag_of(run, "auto")  # published now: the flag needs nothing more
+
+
+def _read_history(run: Run, client: UdlReadClient, data: RunData, now: datetime) -> None:
+    """The rest of two years, for the heatmap: read last, as it is most of a run."""
+    run.check()
+    _, recent_start, history_start = _photometry_spans(run, data)
     run.set(stage="history")
+    _, rest = history_spans(run.window_ms(), history_start, recent_start)
     _read_spans(run, client, data, rest, now)
     data.history_complete = True
-    # The heatmap goes out before the elsets and the GEO snapshot are read.
     run.check()
     analysis(run, "auto")
 
