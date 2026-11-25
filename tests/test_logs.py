@@ -508,12 +508,12 @@ def test_a_body_that_overflows_only_once_escaped_is_cut() -> None:
 
 def test_many_short_attributes_keep_only_the_required_fields() -> None:
     created = record(logging.INFO, "short")
-    created.attributes = {f"lightbee.a{n}": "é" * 8 for n in range(5_000)}
+    created.attributes = {f"lightbee.short{n}": "é" * 8 for n in range(5_000)}
     attributes = _format_in_a_request(created)["attributes"]
     assert attributes["lightbee.attributes_dropped"] is True
     assert attributes[ID_KEY] == "rq-fit"
     assert attributes["url.path"] == "/api/x"
-    assert not any(key.startswith("lightbee.a") for key in attributes)
+    assert not any(key.startswith("lightbee.short") for key in attributes)
 
 
 def test_a_caller_cannot_replace_or_inflate_a_request_field() -> None:
