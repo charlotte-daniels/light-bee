@@ -108,6 +108,9 @@ export function checkRunInputs(values, today) {
   if (!Number.isFinite(km) || km < 1 || km > 2000) {
     return { field: 'threshold', message: 'The screening distance must be 1 to 2,000 km.' };
   }
+  if (values.changeTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(values.changeTime)) {
+    return { field: 'change-time', message: 'Enter the change time as HH:MM (UTC), or leave it blank.' };
+  }
   return null;
 }
 

@@ -7,11 +7,13 @@ import {
 
 const POLL_MS = 1500;
 const PLOT_CONFIG = Object.freeze({ displayModeBar: false, responsive: true, scrollZoom: false });
-const RUN_FIELDS = ['sat-no', 'change-date', 'window-days', 'provider', 'threshold'];
+const RUN_FIELDS = ['sat-no', 'change-date', 'window-days', 'provider', 'threshold', 'change-time'];
 const SERVER_FIELDS = {
   sat_no: 'sat-no', change_date: 'change-date', window_days: 'window-days', provider: 'provider',
-  threshold_km: 'threshold',
+  threshold_km: 'threshold', change_time: 'change-time',
 };
+// What each card's state reads as; the colour only repeats it.
+const CARD_STATES = Object.freeze({ fits: 'Fits the timing', against: 'Does not fit', cannot: "Can't judge" });
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -86,7 +88,7 @@ async function signIn(event) {
 }
 
 function purgePlots() {
-  for (const id of ['plot-seasonal', 'plot-causes']) Plotly.purge($(id));
+  for (const id of ['plot-seasonal', 'plot-causes', 'plot-board']) Plotly.purge($(id));
 }
 
 async function signOut() {
@@ -108,6 +110,7 @@ function runValues() {
     windowDays: $('window-days').value,
     provider: $('provider').value,
     thresholdKm: $('threshold').value,
+    changeTime: $('change-time').value,
   };
 }
 
@@ -145,13 +148,15 @@ async function startRun(event) {
     sat_no: Number(values.satNo), change_date: values.changeDate, window_days: Number(values.windowDays),
     provider: values.provider, threshold_km: Number(values.thresholdKm),
   };
+  if (values.changeTime) body.change_time = values.changeTime;
   try {
     stopPolling();
     state.drawn = new Set();
     state.request = body;
     purgePlots();
-    for (const id of ['export-seasonal', 'export-causes', 'scan-button']) $(id).disabled = true;
+    for (const id of ['export-seasonal', 'export-causes', 'export-board', 'scan-button']) $(id).disabled = true;
     $('flag').hidden = true;
+    $('board').hidden = true;
     state.run = await api('/api/runs', { method: 'POST', body });
     setRunning(true);
     poll();
@@ -217,6 +222,7 @@ async function drawWhatIsReady(run) {
   if (ready.has('causes') && !state.drawn.has('causes')) {
     await drawCauses();
     state.drawn.add('causes');
+    if (state.request?.change_time) await drawBoard();
     $('scan-button').disabled = false;
     presetScanRange();
   }
@@ -292,6 +298,39 @@ async function drawCauses() {
   plot.removeListener('plotly_selected', selected);
   plot.on('plotly_selected', selected);
   $('export-causes').disabled = false;
+}
+
+// The board reads only what Other Causes reads, so it is drawn with it. A board
+// that cannot be drawn says so in place and never stops Other Causes.
+async function drawBoard() {
+  $('board').hidden = false;
+  try {
+    const board = await api(runPath('/board'));
+    $('board-headline').textContent = board.headline;
+    $('board-lead').textContent = board.lead;
+    const cards = $('board-cards');
+    cards.replaceChildren(...board.cards.map(boardCard));
+    await draw('plot-board', board.figure);
+    $('export-board').disabled = false;
+  } catch (error) {
+    $('board-headline').textContent = 'The triage board could not be drawn.';
+    $('board-lead').textContent = error.message;
+  }
+}
+
+function boardCard(card) {
+  const article = document.createElement('article');
+  article.className = 'hyp';
+  article.dataset.state = card.state;
+  const label = document.createElement('p');
+  label.className = 'hyp-state';
+  label.textContent = CARD_STATES[card.state] ?? card.state;
+  const title = document.createElement('h3');
+  title.textContent = card.title;
+  const body = document.createElement('p');
+  body.textContent = card.body;
+  article.append(label, title, body);
+  return article;
 }
 
 // The keyboard scan starts on the six hours up to the latest observation,
@@ -495,6 +534,8 @@ async function ghostsChanged() {
 }
 
 window.addEventListener('resize', () => {
+  const board = $('plot-board');
+  if (board.layout && !board.closest('[hidden]')) Plotly.relayout(board, { width: width() });
   const plot = $('plot-causes');
   if (plot.layout && !plot.closest('[hidden]')) Plotly.relayout(plot, { width: width() });
 });
@@ -507,6 +548,7 @@ async function init() {
   $('scan-form').addEventListener('submit', scanRange);
   $('export-seasonal').addEventListener('click', () => exportPng('plot-seasonal', 'seasonal'));
   $('export-causes').addEventListener('click', () => exportPng('plot-causes', 'other-causes'));
+  $('export-board').addEventListener('click', () => exportPng('plot-board', 'triage'));
   $('scan-close').addEventListener('click', () => $('scan-dialog').close());
   $('scan-csv').addEventListener('click', downloadScanCsv);
   for (const id of RUN_FIELDS) $(id).addEventListener('input', () => $(id).removeAttribute('aria-invalid'));

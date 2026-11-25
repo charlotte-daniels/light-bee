@@ -22,6 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
 from typing import Annotated, Any, Final, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
@@ -38,6 +39,7 @@ from lightbee.analysis.screen import (
     scan,
 )
 from lightbee.analysis.series import Series
+from lightbee.figures.board import board_figure
 from lightbee.figures.causes import CausesInputs, causes_figure
 from lightbee.figures.common import Caption, rounded
 from lightbee.figures.seasonal import seasonal_figure
@@ -55,6 +57,7 @@ from lightbee.web.runs import (
     add_names,
     analysis,
     audit_scan,
+    board_of,
     execute,
     flag_of,
     markings,
@@ -96,6 +99,8 @@ class RunBody(_Body):
     provider: Annotated[StrictStr, Field(pattern=PROVIDER_PATTERN)] = DEFAULT_ELSET_SOURCE
     history_years: Annotated[StrictFloat | StrictInt, Field(ge=0.25, le=2.0)] = 2.0
     threshold_km: Annotated[StrictFloat | StrictInt, Field(ge=1.0, le=2000.0)] = DEFAULT_SCREEN_KM
+    # The approximate change time on the change date, HH:MM UTC; blank for no board.
+    change_time: Annotated[StrictStr, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")] | None = None
 
 
 class ScanBody(_Body):
@@ -158,6 +163,7 @@ FIELD_MESSAGES: Final = {
     "provider": "Choose an elset provider from the list.",
     "history_years": "History must be a quarter of a year to two years.",
     "threshold_km": "The screening distance must be 1 to 2,000 km.",
+    "change_time": "Enter the change time as HH:MM (UTC), no later than now, or leave it blank.",
     "times_ms": "Select between 1 and 50,000 observations inside the window.",
 }
 SIGN_IN_MESSAGE: Final = "Enter your UDL username and password."
@@ -342,6 +348,32 @@ def causes(
     return causes_figure(_causes_inputs(run, basis, names), caption, ghosts=ghosts)
 
 
+@router.get("/runs/{run_id}/board")
+def triage_board(run_id: str, session: Current, request: Request) -> dict[str, Any]:
+    """The anchored triage board: headline, verdict cards and the 72-hour strip."""
+    run = _run_of(run_id, session)
+    if run.request.anchor is None:
+        raise ApiError(404, "This run has no change time, so it has no board.")
+    waiting = "The close approaches are still being screened."
+    _result(run, "causes", waiting=waiting)
+    found = board_of(run)
+    if found is None:
+        if run.released:
+            raise RunReleasedError
+        raise ApiError(409, waiting)
+    names, marking = _names_and_marking(run)
+    caption = _caption(run, _services(request).clock(), marking)
+    return {
+        "headline": found.headline,
+        "lead": found.lead,
+        "cards": [
+            {"key": c.key, "state": c.state, "title": c.title, "body": c.body} for c in found.cards
+        ],
+        "figure": board_figure(found, caption, names),
+        "marking": marking,
+    }
+
+
 @router.post("/runs/{run_id}/scan")
 def neighbourhood(
     run_id: str, body: ScanBody, session: Current, request: Request
@@ -455,9 +487,19 @@ def _run_request(body: RunBody, now: datetime) -> RunRequest:
         raise ApiError(422, FIELD_MESSAGES["change_date"]) from error
     if not EARLIEST_DATE <= change <= now.astimezone(UTC).date():
         raise ApiError(422, FIELD_MESSAGES["change_date"])
-    return RunRequest(
-        body.sat_no, change, body.window_days, body.provider, body.history_years, body.threshold_km
+    at = None if body.change_time is None else dt_time.fromisoformat(body.change_time)
+    made = RunRequest(
+        body.sat_no,
+        change,
+        body.window_days,
+        body.provider,
+        body.history_years,
+        body.threshold_km,
+        at,
     )
+    if made.anchor is not None and made.anchor > now:
+        raise ApiError(422, FIELD_MESSAGES["change_time"])
+    return made
 
 
 def _result(run: Run, name: str, waiting: str = "Still reading.") -> Any:

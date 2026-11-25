@@ -119,3 +119,20 @@ dialog::backdrop { background: rgba(5, 10, 20, 0.7); }
 #scan-rows td:nth-child(2), #scan-dialog th:nth-child(2) { text-align: left; font-family: inherit; max-width: 22ch; overflow-wrap: anywhere; }
 #scan-rows td:not(:nth-child(2)) { white-space: nowrap; }
 .unknown { color: var(--muted); }
+
+/* The triage board (1.4): one card per cause, judged on timing. */
+.board { background: var(--panel); border: 1px solid var(--line); padding: 1rem 1.25rem; margin-bottom: 0.75rem; }
+.kicker { color: var(--amber); font-size: 0.85rem; letter-spacing: 0.05em; text-transform: uppercase; margin: 0; }
+.board-headline { margin: 0.2rem 0 0.35rem; font-size: 1.2rem; }
+.board-lead { margin: 0 0 0.75rem; color: var(--muted); }
+.hyps { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.75rem; margin-bottom: 0.75rem; }
+.hyp { border: 1px solid var(--line); border-left: 6px solid var(--control-edge); background: var(--navy); padding: 0.6rem 0.8rem; }
+.hyp h3 { margin: 0.1rem 0 0.3rem; font-size: 1.05rem; }
+.hyp p { margin: 0 0 0.4rem; font-size: 0.92rem; }
+.hyp-state { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.hyp[data-state="fits"] { border-left-color: var(--amber); }
+.hyp[data-state="fits"] .hyp-state { color: var(--amber); }
+.hyp[data-state="against"] { border-left-color: var(--muted); }
+.hyp[data-state="against"] .hyp-state { color: var(--muted); }
+.hyp[data-state="cannot"] { border-left-style: dashed; }
+.hyp[data-state="cannot"] .hyp-state { color: var(--control-edge); }

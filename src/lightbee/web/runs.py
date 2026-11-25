@@ -31,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from datetime import time as dt_time
 from typing import Any, Final, Literal
 
 import numpy as np
@@ -44,6 +45,7 @@ from lightbee.analysis.seasonal import (
     seasonal_flag,
 )
 from lightbee.analysis.series import DAY_MS, Series
+from lightbee.analysis.triage import Board, Inputs, board
 from lightbee.udl.client import Credentials, UdlAuthError, UdlError, UdlReadClient
 from lightbee.udl.photometry import Photometry, merge
 from lightbee.udl.queries import (
@@ -62,6 +64,10 @@ RECENT_DAYS: Final = 15
 # Elsets for the target are read from this long before the window, so the
 # orbital panels open with a state and the screen has an elset near the start.
 ELSET_LEAD: Final = timedelta(days=3)
+# With a change time the elsets reach back far enough for the board's baseline:
+# 30 days before the 24 hours before the time.
+BOARD_ELSET_LEAD: Final = timedelta(days=31)
+BOARD_AFTER: Final = timedelta(hours=48)
 APPROACH_TIME_LIMIT_S: Final = 30.0
 # Names are read for the approaches the Other Causes panel draws (its MAX_APPROACH_TRACES).
 NAMED_APPROACHES: Final = 20
@@ -101,15 +107,30 @@ class RunRequest:
     provider: str
     history_years: float
     threshold_km: float
+    # The analyst's approximate change time on the change date (1.4); None: no board.
+    change_time: dt_time | None = None
+
+    @property
+    def anchor(self) -> datetime | None:
+        if self.change_time is None:
+            return None
+        return datetime.combine(self.change_date, self.change_time, UTC)
 
     def end(self, now: datetime) -> datetime:
-        """The end of the change date (UTC), or now if that is still to come."""
+        """The end of the change date (UTC), or now if that is still to come.
+
+        With a change time, the window instead ends 48 hours after it, so the
+        board sees two days after the change.
+        """
+        anchor = self.anchor
+        if anchor is not None:
+            return min(anchor + BOARD_AFTER, now)
         day_end = datetime.combine(self.change_date + timedelta(days=1), datetime.min.time(), UTC)
         return min(day_end, now)
 
     @property
     def cache_key(self) -> tuple[Any, ...]:
-        return (self.sat_no, self.provider, self.change_date, self.history_years)
+        return (self.sat_no, self.provider, self.change_date, self.history_years, self.change_time)
 
 
 @dataclass
@@ -300,6 +321,10 @@ def _execute(
     run.set(data=data)
     window_start, end = run.window_ms()
     elset_span = (window_start - round(ELSET_LEAD.total_seconds() * 1000), end)
+    anchor = request.anchor
+    if anchor is not None:
+        reach_back = round((anchor - BOARD_ELSET_LEAD).timestamp() * 1000)
+        elset_span = (min(elset_span[0], reach_back), end)
     need_elsets = not _covers(data.elset_span, elset_span)
     need_catalogue = not _covers(data.catalogue_span, (window_start, end))
     run.set(warm=reuse and not need_elsets and not need_catalogue)
@@ -669,6 +694,44 @@ def flag_of(run: Run, basis: Basis) -> SeasonalFlag | None:
                 run.results["flag"] = True
                 run.flag_ready()
         return made
+
+
+def board_of(run: Run) -> Board | None:
+    """The triage board (1.4) for a run with a change time, once the screen is named.
+
+    It reads only the recent weeks, the elsets, the close approaches and the
+    flag, all held before the rest of the history, so it is made once and kept.
+    """
+    anchor = run.request.anchor
+    data = run.data  # read once: a release may clear it at any moment
+    if anchor is None or data is None:
+        return None
+    with run.lock:
+        held = run.results.get("_board")
+        ready = "causes" in run.results
+        found = list(run.results.get("approaches", []))
+        note = str(run.results.get("_approaches_note", ""))
+        names = dict(data.names)
+    if isinstance(held, Board):
+        return held
+    if not ready:
+        return None
+    flag = flag_of(run, "auto")
+    photometry = data.photometry
+    given = Inputs(
+        _series(data, photometry, "auto") if photometry is not None else None,
+        data.elsets.elsets if data.elsets is not None else [],
+        run.request.provider,
+        found,
+        flag,
+        run.request.threshold_km,
+        names,
+        note,
+    )
+    made = board(given, anchor_ms=round(anchor.timestamp() * 1000), data_end_ms=data.end_ms)
+    with run.lock:
+        run.results["_board"] = made
+    return made
 
 
 def _publish_orbit(run: Run, data: RunData) -> None:

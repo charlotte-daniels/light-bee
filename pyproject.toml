@@ -1,6 +1,6 @@
 [project]
 name = "light-bee"
-version = "1.3.0"
+version = "1.4.0"
 description = "Light Bee: is a satellite's photometric change seasonal, or does something else explain it"
 # The closure in requirements.txt is resolved and wheel-checked on 3.11 and 3.12.
 # The platform test stage runs 3.12; its dependency scanner may run 3.11.

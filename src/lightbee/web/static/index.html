@@ -58,11 +58,27 @@
         <label for="threshold">Screening distance (km)</label>
         <input id="threshold" name="threshold" type="number" min="1" max="2000" value="150" required>
       </div>
+      <div class="field">
+        <label for="change-time">Change time (UTC, approx.)</label>
+        <input id="change-time" name="change-time" type="time" step="60" aria-describedby="change-time-hint">
+        <span class="hint" id="change-time-hint">Optional. Adds the triage board; the window then ends 48 hours after it.</span>
+      </div>
       <button type="submit" id="run-button" aria-describedby="run-error">Run</button>
       <p class="error" id="run-error" role="alert"></p>
     </form>
 
     <output id="progress" class="progress" aria-live="polite"></output>
+
+    <section id="board" class="board" aria-labelledby="board-headline" hidden>
+      <p class="kicker">Triage, around your change time</p>
+      <h2 id="board-headline" class="board-headline"></h2>
+      <p id="board-lead" class="board-lead"></p>
+      <div id="board-cards" class="hyps"></div>
+      <div class="toolbar">
+        <button type="button" class="secondary" id="export-board" disabled>Download PNG</button>
+      </div>
+      <figure id="plot-board" class="plot plot-board" aria-label="Triage strip, not yet drawn"></figure>
+    </section>
 
     <fieldset class="toggle" id="basis-toggle">
       <legend>Magnitude (both modes)</legend>

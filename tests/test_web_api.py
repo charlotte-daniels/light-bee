@@ -1007,3 +1007,52 @@ def test_a_names_read_never_starts_for_an_ended_session_or_twice_for_one_run() -
     assert name_reads_during_a_scan() == 0
     run.cancel.clear()
     assert name_reads_during_a_scan() == 1
+
+
+def test_a_run_with_a_change_time_has_a_triage_board(fake: FakeUdl) -> None:
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        body = {**RUN, "change_time": "06:00"}
+        run = test_client.post("/api/runs", json=body, headers=HEADERS).json()
+        assert test_client.get(f"/api/runs/{run['id']}").json()["stage"] == "done"
+        response = test_client.get(f"/api/runs/{run['id']}/board")
+        assert response.status_code == 200, response.text
+        board = response.json()
+        assert [c["key"] for c in board["cards"]] == ["manoeuvre", "neighbour", "season", "sensor"]
+        assert all(c["state"] in {"fits", "against", "cannot"} for c in board["cards"])
+        assert board["headline"]
+        assert board["lead"].startswith("72 hours from 9 Nov 06:00Z")
+        figure = board["figure"]
+        texts = [a["text"] for a in figure["layout"]["annotations"]]
+        assert "Triage around your change time" in texts
+        assert board["marking"] in texts  # the strip carries its marking, top and bottom
+        assert figure["summary"].startswith("Triage strip.")
+
+
+def test_a_run_without_a_change_time_has_no_board(fake: FakeUdl) -> None:
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        run = test_client.post("/api/runs", json=RUN, headers=HEADERS).json()
+        response = test_client.get(f"/api/runs/{run['id']}/board")
+        assert response.status_code == 404
+        assert "no change time" in response.json()["error"]
+
+
+@pytest.mark.parametrize("when", ["6:00", "24:00", "06:60", "06:00:00", "", "noon"])
+def test_a_change_time_must_be_hours_and_minutes(fake: FakeUdl, when: str) -> None:
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        response = test_client.post("/api/runs", json={**RUN, "change_time": when}, headers=HEADERS)
+        assert response.status_code == 422
+        assert response.json()["fields"] == ["change_time"]
+
+
+def test_a_change_time_still_to_come_is_refused(fake: FakeUdl) -> None:
+    with make_client(fake) as test_client:
+        signed_in(test_client)
+        # NOW is 18:00Z on the change date.
+        response = test_client.post(
+            "/api/runs", json={**RUN, "change_time": "19:00"}, headers=HEADERS
+        )
+        assert response.status_code == 422
+        assert "no later than now" in response.json()["error"]
