@@ -464,3 +464,18 @@ def test_a_near_pass_beyond_the_distance_but_within_the_uncertainty_cannot_be_ju
     neighbour = card(made(found_elsets=elsets(), found=near), "neighbour")
     assert neighbour.state == "cannot"
     assert "beyond your 150 km but within the elsets' uncertainty" in neighbour.body
+
+
+def test_a_busy_strip_labels_only_the_passes_nearest_the_time() -> None:
+    from lightbee.figures.board import LABELLED_PASSES, board_figure
+    from lightbee.figures.common import Caption
+
+    caption = Caption("UNCLASSIFIED", 43874, "test window", "test source", ANCHOR)
+    many = [approach(40100 + k, [(A + (k - 3) * 6 * HOUR_MS, 100.0 + k)]) for k in range(8)]
+    figure = board_figure(made(found_elsets=elsets(), found=many), caption, {})
+    (passes,) = [t for t in figure["data"] if t.get("mode") == "markers+text"]
+    labelled = [i for i, text in enumerate(passes["text"]) if text]
+    assert len(labelled) == LABELLED_PASSES
+    assert len(passes["hovertext"]) == 8  # every pass still says what it is on hover
+    nearest = sorted(range(8), key=lambda k: abs((k - 3) * 6))[:LABELLED_PASSES]
+    assert sorted(labelled) == sorted(nearest)

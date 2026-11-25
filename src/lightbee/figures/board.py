@@ -37,6 +37,8 @@ ROW_PX: Final = 34
 EVENTS_PX: Final = 120
 NEIGHBOUR_MARK: Final = "#ffffff"
 STEP_COLOUR: Final = "#c8d3e0"
+# Passes labelled on the strip, the nearest the time; the rest show on hover.
+LABELLED_PASSES: Final = 4
 
 
 def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> dict[str, Any]:
@@ -141,12 +143,13 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
             "text": f"your change time, {escape(when(board.anchor_ms))}",
             "xref": "x",
             "yref": "paper",
+            # Above the plot, clear of the step labels and the panel title.
             "x": anchor,
-            "y": split,
+            "y": 1.0,
             "xanchor": "left",
-            "yanchor": "top",
+            "yanchor": "bottom",
             "xshift": 4,
-            "yshift": -2,
+            "yshift": 22,
             "showarrow": False,
             "font": {"color": AMBER, "size": 13},
         },
@@ -211,7 +214,13 @@ def _steps(board: Board) -> list[dict[str, Any]]:
 def _passes(board: Board, names: Mapping[int, str]) -> list[dict[str, Any]]:
     if not board.passes:
         return []
-    labels = [f"{name_of(p.sat_no, names)} {p.range_km:,.0f} km" for p in board.passes]
+    labels = [escape(f"{name_of(p.sat_no, names)} {p.range_km:,.0f} km") for p in board.passes]
+    # Only the passes nearest the time are labelled, so a busy strip stays
+    # legible (case 4 had 16); every pass keeps its marker and its hover label.
+    nearest = sorted(
+        range(len(board.passes)), key=lambda i: abs(board.passes[i].tca_ms - board.anchor_ms)
+    )[:LABELLED_PASSES]
+    shown = sorted(nearest)
     return [
         {
             "type": "scatter",
@@ -219,13 +228,15 @@ def _passes(board: Board, names: Mapping[int, str]) -> list[dict[str, Any]]:
             "x": [_iso(p.tca_ms) for p in board.passes],
             "y": [0] * len(board.passes),
             "marker": {"symbol": "diamond", "size": 12, "color": NEIGHBOUR_MARK},
-            "text": [escape(label) for label in labels],
-            # Alternate above and below, so passes close in time stay legible.
+            "text": [label if i in nearest else "" for i, label in enumerate(labels)],
+            "hovertext": labels,
+            # Labelled passes alternate above and below, so two close in time stay apart.
             "textposition": [
-                "top center" if i % 2 == 0 else "bottom center" for i in range(len(labels))
+                "top center" if i in nearest and shown.index(i) % 2 == 0 else "bottom center"
+                for i in range(len(labels))
             ],
             "textfont": {"color": TEXT, "size": 11},
-            "hovertemplate": "%{text}<br>%{x|%d %b %H:%M}Z<extra></extra>",
+            "hovertemplate": "%{hovertext}<br>%{x|%d %b %H:%M}Z<extra></extra>",
             "xaxis": "x",
             "yaxis": "y2",
         }
