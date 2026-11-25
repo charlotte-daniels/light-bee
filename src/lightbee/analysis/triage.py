@@ -598,7 +598,6 @@ def _season(flag: SeasonalFlag | None, rows: Sequence[SensorRow]) -> Card:
 def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
     title = "Sensor"
     judged = _judged(rows)
-    departing = [r for r in judged if r.departs]
     if len(judged) < MIN_SENSORS:
         return Card(
             "sensor",
@@ -609,7 +608,8 @@ def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
             if len(judged) == 1
             else "No sensor saw the object enough both sides of your time.",
         )
-    if not departing:
+    found = _agreement(rows, anchor_ms)
+    if found is None:
         return Card(
             "sensor",
             "cannot",
@@ -617,66 +617,97 @@ def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
             f"None of {len(judged)} sensors departs from its own previous 7 days, "
             "so there is no change to put down to a sensor.",
         )
-    agreeing, level = _agreement(rows, anchor_ms)
-    if len(agreeing) >= MIN_SENSORS:
-        return Card(
-            "sensor",
-            "against",
-            title,
-            f"{joined([r.name for r in agreeing])} depart the same way in the same hours, "
-            "each against its own previous 7 days, so it is not one sensor's artefact.",
-        )
-    only = agreeing[0].name
-    if not level:
+    hours = f"{when(found.span.start_ms)} to {when(found.span.end_ms)}"
+    way = "fainter" if found.span.median_mag > 0 else "brighter"
+    aside = "".join(
+        f" {r.name} departs separately, from {when(s.start_ms)}; that is not judged here."
+        for r, s in found.separate
+    )
+    if found.conflicting:
         return Card(
             "sensor",
             "cannot",
             title,
-            f"Only {only} departs, and no other sensor observed those hours, so one "
-            "sensor's artefact cannot be told from a change.",
+            f"{joined([r.name for r in found.agreeing])} {way} from {hours}, but "
+            f"{joined([r.name for r in found.conflicting])} went the other way in those "
+            f"hours, so the sensors disagree.{aside}",
         )
+    if len(found.agreeing) >= MIN_SENSORS:
+        return Card(
+            "sensor",
+            "against",
+            title,
+            f"{joined([r.name for r in found.agreeing])} depart the same way ({way}) in the "
+            f"same hours, {hours}, each against its own previous 7 days, so it is not one "
+            f"sensor's artefact.{aside}",
+        )
+    only = found.agreeing[0].name
+    if not found.level:
+        return Card(
+            "sensor",
+            "cannot",
+            title,
+            f"Only {only} departs ({way}, {hours}), and no other sensor observed those "
+            f"hours, so one sensor's artefact cannot be told from a change.{aside}",
+        )
+    level = joined([r.name for r in found.level])
     return Card(
         "sensor",
         "fits",
         title,
-        f"Only {only} departs; {joined([r.name for r in level])}, observing the same "
-        f"hours, {'stays' if len(level) == 1 else 'stay'} level. One sensor's artefact "
-        "is likely.",
+        f"Only {only} departs ({way}, {hours}); {level}, observing the same hours, "
+        f"{'stays' if len(found.level) == 1 else 'stay'} level. One sensor's artefact is "
+        f"likely.{aside}",
     )
 
 
-def _agreement(
-    rows: Sequence[SensorRow], anchor_ms: int
-) -> tuple[list[SensorRow], list[SensorRow]]:
-    """The sensors that depart, and those that observed the same hours and stayed level.
+@dataclass(frozen=True)
+class Agreement:
+    """How every sensor stands against one reference departure."""
 
-    A sensor departing the same way in any of a departure's hours, even for one
-    hour, confirms it; only a sensor that observed those hours can say it did not.
+    span: Span  # the reference: the counted departure nearest the time
+    agreeing: list[SensorRow]  # depart the same way in at least one of its hours
+    conflicting: list[SensorRow]  # depart the other way in at least one of its hours
+    level: list[SensorRow]  # observed at least half its hours and did not depart
+    separate: list[tuple[SensorRow, Span]]  # departures elsewhere, not judged
+
+
+def _agreement(rows: Sequence[SensorRow], anchor_ms: int) -> Agreement | None:
+    """Every sensor judged against the counted departure nearest the time.
+
+    One departing hour of the same sign, even alone, confirms the reference;
+    only a sensor that observed at least half its hours can say it stayed level.
     """
     start, _ = strip(anchor_ms)
-    judged = _judged(rows)
-    departing = [r for r in judged if r.departs]
-    if not departing:
-        return [], []
-    counted = [s for s in departing[0].spans if s.end_ms > anchor_ms - EARLY_MS]
-    sign = 1 if counted[0].median_mag > 0 else -1
-    hours = {
-        h
-        for r in departing
+    counted = [
+        (r, s)
+        for r in _judged(rows)
+        if r.departs
         for s in r.spans
         if s.end_ms > anchor_ms - EARLY_MS
-        for h in range((s.start_ms - start) // HOUR_MS, (s.end_ms - start) // HOUR_MS)
-    }
-    agreeing, level = list(departing), []
+    ]
+    if not counted:
+        return None
+    owner, span = min(
+        counted,
+        key=lambda c: (abs((c[1].start_ms + c[1].end_ms) / 2 - anchor_ms), -abs(c[1].median_mag)),
+    )
+    sign = 1 if span.median_mag > 0 else -1
+    hours = range((span.start_ms - start) // HOUR_MS, (span.end_ms - start) // HOUR_MS)
+    found = Agreement(span, [owner], [], [], [])
     for row in rows:
-        if row in departing or row.scatter_mag is None:
+        if row is owner or row.scatter_mag is None:
             continue
-        seen = [h for h in sorted(hours) if row.hour_count[h] >= HOUR_MIN]
+        seen = [h for h in hours if row.hour_count[h] >= HOUR_MIN]
         if any(row.hour_sign[h] == sign for h in seen):
-            agreeing.append(row)
-        elif seen:
-            level.append(row)
-    return agreeing, level
+            found.agreeing.append(row)
+        elif any(row.hour_sign[h] == -sign for h in seen):
+            found.conflicting.append(row)
+        elif 2 * len(seen) >= len(hours):
+            found.level.append(row)
+    judged_here = {id(r) for r in (*found.agreeing, *found.conflicting)}
+    found.separate.extend((r, s) for r, s in counted if id(r) not in judged_here and r is not owner)
+    return found
 
 
 def _judged(rows: Sequence[SensorRow]) -> list[SensorRow]:
@@ -686,21 +717,21 @@ def _judged(rows: Sequence[SensorRow]) -> list[SensorRow]:
 
 def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) -> str:
     judged = _judged(rows)
-    departing = [r for r in judged if r.departs]
+    found = _agreement(rows, anchor_ms) if judged else None
     if not judged:
         bright = "Too few observations near your time to compare any sensor with itself"
-    elif departing:
-        first = min(
-            s.start_ms for r in departing for s in r.spans if s.end_ms > anchor_ms - EARLY_MS
-        )
-        agreeing, level = _agreement(rows, anchor_ms)
-        seen = len(agreeing) + len(level)
-        verb = "departs" if len(agreeing) == 1 else "depart"
+    elif found is not None:
+        agree = len(found.agreeing)
+        seen = agree + len(found.conflicting) + len(found.level)
+        way = "fainter" if found.span.median_mag > 0 else "brighter"
         bright = (
-            f"{len(agreeing)} of {seen} {'sensor' if seen == 1 else 'sensors'} observing "
-            f"those hours {verb} from {'its' if len(agreeing) == 1 else 'their'} own "
-            f"previous 7 days, from {when(first)}"
+            f"{agree} of {seen} {'sensor' if seen == 1 else 'sensors'} observing those hours "
+            f"{'turns' if agree == 1 else 'turn'} {way} against "
+            f"{'its' if agree == 1 else 'their'} own previous 7 days, "
+            f"from {when(found.span.start_ms)}"
         )
+        if found.conflicting:
+            bright += f", and {len(found.conflicting)} the other way"
     else:
         bright = f"None of {len(judged)} sensors departs from its own previous 7 days"
     fitting = [c.title for c in cards if c.state == "fits"]

@@ -156,8 +156,8 @@ def test_a_three_hour_fade_in_every_sensor_is_dated_to_the_hour() -> None:
         assert span.median_mag == pytest.approx(0.3, abs=0.06)
     result = made(photometry(fade))
     assert result.headline.startswith(
-        "3 of 3 sensors observing those hours depart from their own previous 7 days, "
-        "from 19 Nov 05:30Z"
+        "3 of 3 sensors observing those hours turn fainter against their own previous "
+        "7 days, from 19 Nov 05:30Z"
     )
     assert card(result, "sensor").state == "against"  # all three together: not one sensor
     assert card(result, "season").state == "against"  # hours, not seasons
@@ -299,7 +299,9 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
     texts = [a["text"] for a in figure["layout"]["annotations"]]
     assert texts.count("UNCLASSIFIED") == 2
     assert "your change time, 19 Nov 04:30Z" in texts
-    assert figure["summary"].startswith("Triage strip. 3 of 3 sensors observing those hours depart")
+    assert figure["summary"].startswith(
+        "Triage strip. 3 of 3 sensors observing those hours turn fainter"
+    )
 
 
 def test_a_strip_with_no_sensor_says_so() -> None:
@@ -401,8 +403,8 @@ def test_one_hour_in_a_second_sensor_confirms_anothers_departure() -> None:
     result = made(series.take(keep))
     sensor = card(result, "sensor")
     assert sensor.state == "against"
-    assert "EXO1612 and EXO1834 depart the same way in the same hours" in sensor.body
-    assert result.headline.startswith("2 of 2 sensors observing those hours depart")
+    assert "EXO1612 and EXO1834 depart the same way (brighter) in the same hours" in sensor.body
+    assert result.headline.startswith("2 of 2 sensors observing those hours turn brighter")
 
 
 def test_a_lone_departure_no_other_sensor_observed_cannot_be_judged() -> None:
@@ -412,3 +414,28 @@ def test_a_lone_departure_no_other_sensor_observed_cannot_be_judged() -> None:
     sensor = card(made(alone), "sensor")
     assert sensor.state == "cannot"
     assert "no other sensor observed those hours" in sensor.body
+
+
+def test_departures_at_different_times_are_not_one_change_seen_twice() -> None:
+    """Engineering review: two unrelated departures read as confirmation."""
+    events = {"EXO1612": (-3.0, -1.0, 0.5), "EXO1834": (30.0, 33.0, -0.5)}
+    sensor = card(made(photometry(events)), "sensor")
+    assert sensor.state == "fits"  # the one nearest the time, the others level then
+    assert sensor.body.startswith("Only EXO1612 departs (fainter, 19 Nov 01:30Z")
+    assert "EXO1834 departs separately, from 20 Nov 10:30Z" in sensor.body
+
+
+def test_sensors_departing_opposite_ways_in_the_same_hours_disagree() -> None:
+    events = {"EXO1612": (2.0, 5.0, 0.5), "EXO1834": (2.0, 5.0, -0.5)}
+    result = made(photometry(events))
+    sensor = card(result, "sensor")
+    assert sensor.state == "cannot"
+    assert "went the other way in those hours, so the sensors disagree" in sensor.body
+    assert ", and 1 the other way" in result.headline
+
+
+def test_one_opposite_hour_is_a_conflict_not_a_level_witness() -> None:
+    events = {"EXO1612": (2.0, 5.0, 0.5), "EXO1834": (3.0, 4.0, -0.5)}
+    sensor = card(made(photometry(events)), "sensor")
+    assert sensor.state == "cannot"
+    assert "EXO1834 went the other way" in sensor.body
