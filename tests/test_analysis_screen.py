@@ -53,18 +53,19 @@ def test_a_known_along_track_offset_propagates_to_the_right_separation() -> None
     assert distance == pytest.approx(np.full(times.size, 100.0), rel=0.02)
 
 
-def test_a_selection_finds_the_close_object_and_excludes_the_far_and_out_of_plane() -> None:
+def test_a_selection_finds_close_objects_in_and_out_of_plane_and_excludes_the_far() -> None:
     catalogue = {
         40001: geo(40001, offset_deg=offset_for(100.0)),
         40002: geo(40002, offset_deg=offset_for(3_000.0)),
+        # 8 degrees out of plane, but 50 km away at the node: close, so listed.
         40003: geo(40003, offset_deg=offset_for(50.0), inclination=8.0),
         40004: geo(40004, offset_deg=offset_for(200.0)),  # inside the uncertainty band
         TARGET: geo(TARGET),
     }
     selection = T0 + np.arange(0, 3 * 3_600_000, 1_000)
     result = scan(selection, [geo(TARGET)], catalogue, threshold_km=150.0)
-    assert [n.sat_no for n in result.neighbours] == [40001, 40004]
-    first, second = result.neighbours
+    assert [n.sat_no for n in result.neighbours] == [40003, 40001, 40004]
+    _, first, second = result.neighbours
     assert first.min_km == pytest.approx(100.0, rel=0.02)
     assert first.inside is True
     assert first.borderline is True  # 100 km is within 87 km of 150
@@ -72,7 +73,7 @@ def test_a_selection_finds_the_close_object_and_excludes_the_far_and_out_of_plan
     assert second.borderline is True
     assert first.separations_km.size == result.times_ms.size == 180
     assert first.elset_age_hours < 3.0
-    assert result.screened == 3  # the target and the out-of-plane object are not propagated
+    assert result.screened == 4  # the target is not propagated
     assert result.thinned is False
 
 
@@ -149,9 +150,9 @@ def test_approaches_over_the_window_find_and_refine_the_closest_pass() -> None:
     assert closest.track_ms.size == closest.track_km.size == 7 * 24 * 12 + 1
 
 
-def test_candidates_cut_on_plane_and_exclude_the_target() -> None:
+def test_candidates_exclude_the_target_but_not_objects_in_another_plane() -> None:
     catalogue = {TARGET: geo(TARGET), 40001: geo(40001), 40003: geo(40003, inclination=8.0)}
-    assert [c.sat_no for c in candidates(catalogue, geo(TARGET), exclude=TARGET)] == [40001]
+    assert [c.sat_no for c in candidates(catalogue, exclude=TARGET)] == [40001, 40003]
     assert SGP4_UNCERTAINTY_KM == 87.0
 
 
@@ -161,7 +162,7 @@ def test_a_full_geo_snapshot_scans_well_inside_fifteen_seconds() -> None:
         40000 + k: geo(
             40000 + k,
             offset_deg=float(rng.uniform(0, 360)),
-            inclination=float(rng.uniform(0.0, 2.9)),
+            inclination=float(rng.uniform(0.0, 15.0)),  # the whole GEO belt, old drifters included
             raan=float(rng.uniform(0, 359)),
         )
         for k in range(900)
@@ -181,10 +182,10 @@ def test_a_full_geo_snapshot_scans_well_inside_fifteen_seconds() -> None:
 
 def test_eccentric_objects_are_left_out_and_a_flood_of_candidates_is_refused() -> None:
     catalogue = {40001: geo(40001, eccentricity=MAX_ECCENTRICITY + 0.05), 40002: geo(40002)}
-    assert [c.sat_no for c in candidates(catalogue, geo(TARGET), exclude=TARGET)] == [40002]
+    assert [c.sat_no for c in candidates(catalogue, exclude=TARGET)] == [40002]
     flood = {40000 + k: geo(40000 + k) for k in range(MAX_CANDIDATES + 1)}
     with pytest.raises(ScreenError, match="more than the"):
-        candidates(flood, geo(TARGET), exclude=TARGET)
+        candidates(flood, exclude=TARGET)
 
 
 def test_a_node_crossing_between_coarse_samples_is_found_at_a_one_km_threshold() -> None:
@@ -194,6 +195,16 @@ def test_a_node_crossing_between_coarse_samples_is_found_at_a_one_km_threshold()
     assert [a.sat_no for a in found] == [40006]
     assert found[0].range_km < 1.0
     assert found[0].inside is True
+
+
+def test_a_neighbour_four_degrees_out_of_plane_is_still_screened() -> None:
+    """Case 1 of the owner's known events: Express 103 at 0.01 degrees passed
+    104 km from 50321 at 4.08 degrees, and the old 3 degree plane cut hid it."""
+    target = geo(TARGET, inclination=4.08)
+    neighbour = geo(40008, inclination=0.01, offset_deg=offset_for(60.0))
+    found = approaches(T0, T0 + DAY_MS, [target], {40008: neighbour}, threshold_km=150.0)
+    assert [a.sat_no for a in found] == [40008]
+    assert len(found[0].passes) >= 2  # it meets the target at each node, twice a day
 
 
 def test_local_minima_are_all_candidates_for_refinement_lowest_first() -> None:

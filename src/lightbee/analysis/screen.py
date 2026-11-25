@@ -37,9 +37,6 @@ from lightbee.udl.records import Elset
 
 DEFAULT_SCREEN_KM: Final = 150.0
 SCREEN_KM_RANGE: Final = (1.0, 2_000.0)
-# An object 3 degrees out of plane cannot come close without a very large
-# relative velocity; the predecessor screened with the same cut.
-SCREEN_INCLINATION_DEG: Final = 3.0
 # Near-circular objects only, as the GEO belt is.
 MAX_ECCENTRICITY: Final = 0.1
 # Circular GEO speed. Two orbits whose planes differ by an angle a, with
@@ -140,7 +137,7 @@ def _target_positions(targets: Sequence[Elset], times_ms: IntArray) -> tuple[Flo
 
 
 def _reference(targets: Sequence[Elset], times_ms: IntArray) -> Elset:
-    """The target elset nearest the middle of the times, for the plane cut and speed bound.
+    """The target elset nearest the middle of the times, for the speed bound.
 
     Called only after `_target_positions`, which refuses an empty list."""
     middle = int(times_ms[times_ms.size // 2])
@@ -166,14 +163,17 @@ def sweep_slack_km(item: Elset, target: Elset) -> float:
     return float((speed + SPEED_MARGIN_KM_S) * COARSE_STEP_MS / 2_000)
 
 
-def candidates(catalogue: Mapping[int, Elset], target: Elset, *, exclude: int) -> list[Elset]:
-    """Near-circular GEO objects close enough in plane to matter, the target excluded."""
+def candidates(catalogue: Mapping[int, Elset], *, exclude: int) -> list[Elset]:
+    """Near-circular GEO objects, the target excluded.
+
+    There is no plane cut. Two GEO orbits at different inclinations still cross
+    where their planes meet, twice a day; a 3 degree cut hid Express 103
+    (0.01 degrees) passing 104 km from 50321 (4.08 degrees) on 22 Nov 2026.
+    The sweep cut widens with the plane angle instead (`sweep_slack_km`)."""
     chosen = [
         item
         for sat_no, item in sorted(catalogue.items())
-        if sat_no != exclude
-        and item.eccentricity <= MAX_ECCENTRICITY
-        and abs(item.inclination - target.inclination) <= SCREEN_INCLINATION_DEG
+        if sat_no != exclude and item.eccentricity <= MAX_ECCENTRICITY
     ]
     if len(chosen) > MAX_CANDIDATES:
         raise ScreenError(
@@ -270,7 +270,7 @@ def scan(
         raise ScreenError("the selection contains no observations")
     target_r, target_age = _target_positions(targets, times)
     reference = _reference(targets, times)
-    near = candidates(catalogue, reference, exclude=reference.sat_no)
+    near = candidates(catalogue, exclude=reference.sat_no)
     neighbours = []
     reach = threshold + SGP4_UNCERTAINTY_KM
     for item, row in zip(near, _distances(near, times, target_r, deadline), strict=True):
@@ -355,7 +355,7 @@ def approaches(
     times = np.arange(start_ms, end_ms + 1, COARSE_STEP_MS, dtype=np.int64)
     target_r, _ = _target_positions(targets, times)
     reference = _reference(targets, times)
-    near = candidates(catalogue, reference, exclude=reference.sat_no)
+    near = candidates(catalogue, exclude=reference.sat_no)
     found = []
     reach = threshold + SGP4_UNCERTAINTY_KM
     for item, row in zip(near, _distances(near, times, target_r, deadline), strict=True):
