@@ -620,7 +620,9 @@ def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
     hours = f"{when(found.span.start_ms)} to {when(found.span.end_ms)}"
     way = "fainter" if found.span.median_mag > 0 else "brighter"
     aside = "".join(
-        f" {r.name} departs separately, from {when(s.start_ms)}; that is not judged here."
+        f" {r.name} also turns {'fainter' if s.median_mag > 0 else 'brighter'} "
+        f"{'earlier' if s.start_ms < found.span.start_ms else 'later'}, from "
+        f"{when(s.start_ms)}; that is not judged here."
         for r, s in found.separate
     )
     if found.conflicting:
@@ -705,8 +707,11 @@ def _agreement(rows: Sequence[SensorRow], anchor_ms: int) -> Agreement | None:
             found.conflicting.append(row)
         elif 2 * len(seen) >= len(hours):
             found.level.append(row)
-    judged_here = {id(r) for r in (*found.agreeing, *found.conflicting)}
-    found.separate.extend((r, s) for r, s in counted if id(r) not in judged_here and r is not owner)
+    # Every other departure that does not overlap the reference is named, whoever
+    # made it, so nothing the board saw goes unmentioned.
+    found.separate.extend(
+        (r, s) for r, s in counted if s.end_ms <= span.start_ms or s.start_ms >= span.end_ms
+    )
     return found
 
 

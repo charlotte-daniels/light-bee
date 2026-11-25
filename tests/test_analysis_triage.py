@@ -422,7 +422,7 @@ def test_departures_at_different_times_are_not_one_change_seen_twice() -> None:
     sensor = card(made(photometry(events)), "sensor")
     assert sensor.state == "fits"  # the one nearest the time, the others level then
     assert sensor.body.startswith("Only EXO1612 departs (fainter, 19 Nov 01:30Z")
-    assert "EXO1834 departs separately, from 20 Nov 10:30Z" in sensor.body
+    assert "EXO1834 also turns brighter later, from 20 Nov 10:30Z" in sensor.body
 
 
 def test_sensors_departing_opposite_ways_in_the_same_hours_disagree() -> None:
@@ -439,3 +439,28 @@ def test_one_opposite_hour_is_a_conflict_not_a_level_witness() -> None:
     sensor = card(made(photometry(events)), "sensor")
     assert sensor.state == "cannot"
     assert "EXO1834 went the other way" in sensor.body
+
+
+def test_a_second_departure_by_the_same_sensor_is_named_too() -> None:
+    events = {"EXO1612": (2.0, 5.0, 0.5), "EXO1834": (2.0, 5.0, 0.5)}
+    series = photometry(events)
+    later = (series.sensor == 0) & (series.epoch_ms >= A + 30 * HOUR_MS)
+    series = Series(
+        series.epoch_ms,
+        np.where(later & (series.epoch_ms < A + 33 * HOUR_MS), series.mag - 0.5, series.mag),
+        series.sepa,
+        series.geolon,
+        series.sensor,
+        series.sensors,
+        series.basis,
+    )
+    sensor = card(made(series), "sensor")
+    assert sensor.state == "against"
+    assert "EXO1612 also turns brighter later, from 20 Nov 10:30Z" in sensor.body
+
+
+def test_a_near_pass_beyond_the_distance_but_within_the_uncertainty_cannot_be_judged() -> None:
+    near = [approach(45985, [(A + HOUR_MS, 200.0)])]
+    neighbour = card(made(found_elsets=elsets(), found=near), "neighbour")
+    assert neighbour.state == "cannot"
+    assert "beyond your 150 km but within the elsets' uncertainty" in neighbour.body
