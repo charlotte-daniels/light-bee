@@ -156,8 +156,7 @@ def test_a_three_hour_fade_in_every_sensor_is_dated_to_the_hour() -> None:
         assert span.median_mag == pytest.approx(0.3, abs=0.06)
     result = made(photometry(fade))
     assert result.headline.startswith(
-        "From 19 Nov 05:30Z, 3 of the 3 sensors watching turn fainter against their own "
-        "previous 7 days"
+        "From 19 Nov 05:30Z, all 3 sensors watching turn fainter against their own previous 7 days"
     )
     assert card(result, "sensor").state == "against"  # all three together: not one sensor
     assert card(result, "season").state == "against"  # hours, not seasons
@@ -312,7 +311,7 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
     assert texts.count("UNCLASSIFIED") == 2
     assert "your change time, 19 Nov 04:30Z" in texts
     assert figure["summary"].startswith(
-        "Triage strip. From 19 Nov 05:30Z, 3 of the 3 sensors watching turn fainter"
+        "Triage strip. From 19 Nov 05:30Z, all 3 sensors watching turn fainter"
     )
 
 
@@ -416,7 +415,7 @@ def test_one_hour_in_a_second_sensor_confirms_anothers_departure() -> None:
     sensor = card(result, "sensor")
     assert sensor.state == "against"
     assert "EXO1612 and EXO1834 depart the same way (brighter) in the same hours" in sensor.body
-    assert ", 2 of the 2 sensors watching turn brighter" in result.headline
+    assert ", both sensors watching turn brighter" in result.headline
 
 
 def test_a_lone_departure_no_other_sensor_observed_cannot_be_judged() -> None:
@@ -651,3 +650,38 @@ def test_a_gap_under_an_hour_reads_in_minutes() -> None:
 
     assert apart(A + 24 * 60_000, A) == "24 minutes after your time"
     assert apart(A - 90 * 60_000, A) == "1.5 hours before your time"
+
+
+def test_the_page_key_uses_the_same_colours_as_the_strip() -> None:
+    """Design review of 1.5: the key's swatches and the plot must never drift apart."""
+    import re
+    from pathlib import Path
+
+    from lightbee.figures import board as strip_figure
+
+    css = (Path(strip_figure.__file__).parents[1] / "web" / "static" / "app.css").read_text(
+        encoding="utf-8"
+    )
+    root = css.split(":root {", 1)[1].split("}", 1)[0]
+    tokens = dict(re.findall(r"--([a-z0-9-]+):\s*([^;]+);", root))
+
+    def same(token: str, constant: str) -> bool:
+        return tokens[token].replace(" ", "").lower() == constant.replace(" ", "").lower()
+
+    assert same("plot-band", strip_figure.BAND)
+    assert same("plot-within", strip_figure.WITHIN)
+    assert same("plot-brighter", strip_figure.BRIGHTER)
+    assert same("plot-fainter", strip_figure.FAINTER)
+    assert same("control-edge", strip_figure.EDGE)
+
+
+def test_counts_and_gaps_read_naturally() -> None:
+    from lightbee.analysis.triage import _how_many, apart
+
+    assert _how_many(3, 3) == "all 3 sensors"
+    assert _how_many(2, 2) == "both sensors"
+    assert _how_many(1, 1) == "the 1 sensor"
+    assert _how_many(2, 3) == "2 of the 3 sensors"
+    assert apart(A + 60_000, A) == "1 minute after your time"
+    assert apart(A + 10_000, A) == "under a minute after your time"
+    assert apart(A + 59 * 60_000 + 50_000, A) == "1.0 hours after your time"

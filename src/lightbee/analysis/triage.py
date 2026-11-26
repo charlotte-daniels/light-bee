@@ -498,9 +498,21 @@ def when(ms: float) -> str:
 def apart(ms: float, anchor_ms: int) -> str:
     hours = abs(ms - anchor_ms) / HOUR_MS
     side = "before" if ms < anchor_ms else "after"
-    if hours < 1:  # minutes read more naturally than a fraction of an hour
-        return f"{round(hours * 60)} minutes {side} your time"
+    minutes = round(hours * 60)
+    if minutes == 0:
+        return f"under a minute {side} your time"
+    if minutes < 60:  # minutes read more naturally than a fraction of an hour
+        return f"{minutes} {'minute' if minutes == 1 else 'minutes'} {side} your time"
     return f"{hours:.1f} hours {side} your time"
+
+
+def _how_many(agree: int, seen: int) -> str:
+    """ "all 3 sensors", "the 1 sensor", or "2 of the 3 sensors"."""
+    if agree == seen:
+        if seen <= 2:  # "the 1 sensor" and "both sensors" read better
+            return "the 1 sensor" if seen == 1 else "both sensors"
+        return f"all {seen} sensors"
+    return f"{agree} of the {seen} {'sensor' if seen == 1 else 'sensors'}"
 
 
 def name_of(sat_no: int, names: Mapping[int, str]) -> str:
@@ -854,7 +866,7 @@ def _attitude(rows: Sequence[SensorRow], manoeuvre: Card, anchor_ms: int) -> Car
         (
             len(stepped) >= MIN_SENSORS,
             f"{joined(stepped)}: their medians stay beyond their normal ranges from your time "
-            "to the end of the strip, a level step, the kind a solar array offset change gives."
+            "to the end of the strip: a level step, the kind a solar array offset change gives."
             f"{flicker}{caveat}{tail}",
         ),
         (
@@ -1039,8 +1051,7 @@ def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) 
         way = "fainter" if found.span.median_mag > 0 else "brighter"
         # The time first, so "watching" has something to refer to (design review of 1.5).
         bright = (
-            f"From {when(found.span.start_ms)}, {agree} of the {seen} "
-            f"{'sensor' if seen == 1 else 'sensors'} watching "
+            f"From {when(found.span.start_ms)}, {_how_many(agree, seen)} watching "
             f"{'turns' if agree == 1 else 'turn'} {way} against "
             f"{'its' if agree == 1 else 'their'} own previous 7 days"
         )

@@ -57,10 +57,14 @@ NEIGHBOUR_MARK: Final = "#ffffff"
 STEP_COLOUR: Final = "#c8d3e0"
 # Passes labelled on the strip, the nearest the time; the rest show on hover.
 LABELLED_PASSES: Final = PASSES_LABELLED
-PANEL_TITLE: Final = (
-    "Each sensor against its own previous 7 days: shaded, its normal range; grey, within it; "
-    "blue brighter or orange fainter, beyond it; boxed, a departure; up is brighter"
+PANEL_TITLE: Final = "Each sensor against its own previous 7 days · up is brighter"
+# The key in words, at the foot of the figure so the PNG stands alone; one line
+# that fits narrower exports (the page has its own key, with swatches).
+KEY: Final = (
+    "Shaded: its normal range · grey: an hour within it · blue brighter or orange fainter: "
+    "beyond it · boxed: a departure"
 )
+KEY_SHIFT_PX: Final = -44  # below the time axis labels, above the footer lines
 EDGE: Final = "#739bcf"  # the band's edges, 7.4:1 on black, so the range reads at a glance
 
 
@@ -132,6 +136,17 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
         *figure_layout["annotations"],
         *notes,
         panel_title(PANEL_TITLE, "x", 1.0),
+        {
+            "text": escape(KEY),
+            "xref": "paper",
+            "yref": "paper",
+            "x": 0.5,
+            "y": 0.0,
+            "yanchor": "top",
+            "yshift": KEY_SHIFT_PX,
+            "showarrow": False,
+            "font": {"color": MUTED, "size": 12},
+        },
         {
             "text": f"your change time, {escape(when(board.anchor_ms))}",
             "xref": "x",
