@@ -14,6 +14,7 @@ Python (src/**/*.py)
   S7632  a `noqa` comment with anything after its rule codes
   S1244  `==` or `!=` against a float literal
   S7504  a loop or comprehension over `list(x)` (1.1.0 upload, 12 November 2026)
+  S3358  a conditional expression nested in another (1.5.0 upload, 26 November 2026)
 Dockerfile
   S7020  a line over 120 characters (the flagged line was 129; its split
          halves, 95 and under, passed)
@@ -267,10 +268,27 @@ def needless_list(path: Path, tree: ast.AST) -> list[str]:
     return problems
 
 
+def nested_conditional(path: Path, tree: ast.AST) -> list[str]:
+    """python:S3358: a conditional expression inside another's branch or test.
+
+    SonarQube flagged `"a" if x else ("b" if y else "c")` (1.5.0 upload,
+    26 November 2026); written as statements it passed.
+    """
+    return [
+        f"{path}:{inner.lineno} S3358 nested conditional expression"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.IfExp)
+        for part in (node.test, node.body, node.orelse)
+        for inner in ast.walk(part)
+        if isinstance(inner, ast.IfExp)
+    ]
+
+
 def python_problems(path: Path, text: str) -> list[str]:
     tree = ast.parse(text)
     problems = duplicated_literals(path, tree) + uninferred_returns(path, tree)
     problems += float_equality(path, tree) + needless_list(path, tree)
+    problems += nested_conditional(path, tree)
     for number, line in enumerate(text.splitlines(), start=1):
         if _NOQA_WITH_TEXT.search(line):
             problems.append(f"{path}:{number} S7632 noqa comment carries text after its codes")

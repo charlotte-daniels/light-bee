@@ -242,7 +242,12 @@ def _dots(board: Board, i: int, row: SensorRow, groups: dict[str, dict[str, list
         value, count = float(row.hour_median[h]), int(row.hour_count[h])
         if count < HOUR_MIN or math.isnan(value):  # an hour too thin to judge, or none
             continue
-        key = "within" if abs(value) < limit else ("brighter" if value < 0 else "fainter")
+        if abs(value) < limit:
+            key = "within"
+        elif value < 0:
+            key = "brighter"
+        else:
+            key = "fainter"
         drawn = max(-reach, min(reach, value)) / reach * ROW_HALF
         centre = board.start_ms + h * HOUR_MS + HOUR_MS / 2
         groups[key]["x"].append(_iso(centre))

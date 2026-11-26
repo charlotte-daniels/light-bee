@@ -106,6 +106,14 @@ _S7773: Final = "export function f(value) {\n  return value ? 1 : NaN;\n}\n"
 _PLANTED: Final = "src/lightbee/planted.py"
 _MJS: Final = "src/lightbee/web/static/planted.mjs"
 _PYTHON_VARIANTS: Final = {
+    # The 1.5.0 upload's finding, as SonarQube flagged it, and the same in a test.
+    "S3358 a conditional nested in another's else": (
+        "def f(v: float, limit: float) -> str:\n"
+        '    return "within" if abs(v) < limit else ("brighter" if v < 0 else "fainter")\n'
+    ),
+    "S3358 a conditional nested in another's test": (
+        "def f(a: int, b: int) -> int:\n    return 1 if (a if b else 0) else 2\n"
+    ),
     "S1244 against a negative float": "def f(x: float) -> bool:\n    return x == -1.0\n",
     "S5886 through a module alias": (
         "import dataclasses as dc\n\n\ndef f(s: object) -> object:\n    return dc.replace(s)\n"

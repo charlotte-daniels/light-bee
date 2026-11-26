@@ -157,16 +157,19 @@ class JsonFormatter(logging.Formatter):
             "severity_text": text,
             "severity_number": number,
             "body": _cut(record.getMessage(), MAX_BODY_CHARS),
-            # A required key is bounded tighter: ours are at most 256 characters
-            # where cleaned, so this only touches one a caller put in `extra`.
-            "attributes": {
-                key: _cut(value, MAX_PATH_CHARS if key in REQUIRED_ATTRIBUTES else MAX_VALUE_CHARS)
-                if isinstance(value, str)
-                else value
-                for key, value in attributes.items()
-            },
+            "attributes": {key: _bounded(key, value) for key, value in attributes.items()},
         }
         return _fit(line)
+
+
+def _bounded(key: str, value: Any) -> Any:
+    """A string attribute cut to its bound; a required key is bounded tighter (ours
+    are at most 256 characters where cleaned, so this only touches one a caller put
+    in `extra`). Anything else is kept as it is."""
+    if not isinstance(value, str):
+        return value
+    limit = MAX_PATH_CHARS if key in REQUIRED_ATTRIBUTES else MAX_VALUE_CHARS
+    return _cut(value, limit)
 
 
 def _cut(value: str, limit: int) -> str:
