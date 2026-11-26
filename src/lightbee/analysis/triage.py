@@ -12,7 +12,10 @@ time and looks 24 hours before it and 48 after:
 * the target's elset period steps against its own typical step over the
   30 days before;
 * every pass of every neighbour within reach;
-* the seasonal flag, which says it cannot judge when it cannot.
+* the seasonal flag, which says it cannot judge when it cannot;
+* (1.5) the light curve signatures of an attitude or configuration change, from
+  the research brief of proposal 04: a feature recurring at the same geometry,
+  a level step, the onset of flicker, or a departure alongside a manoeuvre.
 
 Each cause is judged on timing only, and says so when it cannot judge.
 """
@@ -21,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Final, Literal
 
 import numpy as np
@@ -69,6 +72,21 @@ NIGHTS_MIN: Final = 3  # baseline nights needed to measure the nightly spread
 SPAN_MIN_HOURS: Final = 2
 SCATTER_FLOOR_MAG: Final = 0.02
 MAX_SENSOR_ROWS: Final = 12
+# Attitude (1.5). Onset of flicker: the spread within an hour after the time is
+# at least this many times the baseline's, in 2 or more sensors. No published
+# threshold exists for this data (research brief, proposal 04): a first
+# setting, to be tuned on the owner's events.
+FLICKER_RATIO: Final = 2.0
+FLICKER_HOUR_MIN: Final = 6  # observations in an hour to measure its spread
+FLICKER_HOURS_MIN: Final = 3  # such hours needed on each side
+# Recurrence: a departure coming back within an hour of the same time of day,
+# so at the same solar phase angle, 1 or 2 days apart (Hall 2011).
+RECUR_DAYS: Final = (-2, -1, 1, 2)
+RECUR_SLACK_HOURS: Final = 1
+# The equinox glint season (Chote et al. 2025; Hall 2011): within this many
+# days of an equinox a recurring feature may be a seasonal glint.
+EQUINOX_DAYS: Final = 30
+EQUINOXES: Final = ((3, 20), (9, 22))
 ELSET_BASELINE_DAYS: Final = 30
 BASELINE_STEPS_MIN: Final = 10
 # A period step this many times the object's typical step fits a manoeuvre.
@@ -116,6 +134,17 @@ class SensorRow:
     # (HOURS,): +1 or -1 where that hour alone departs, else 0. A single hour
     # never stands alone as a change, but it does confirm another sensor's.
     hour_sign: IntArray
+    # The spread within each hour after the time over the same in its baseline
+    # (1.5): a rise is the onset of flicker, as a rotation or tumble gives.
+    # None: too few well-observed hours on either side.
+    flicker_ratio: float | None = None
+
+    @property
+    def limit_mag(self) -> float | None:
+        """How far an hour must sit from the baseline to depart: its normal range."""
+        if self.scatter_mag is None:
+            return None
+        return max(SHIFT_FLOOR_MAG, DEPART_Z * self.scatter_mag)
 
 
 @dataclass(frozen=True)
@@ -209,6 +238,8 @@ def _sensor_row(name: str, mine: Series, anchor_ms: int) -> SensorRow:
     sign = _hour_signs(medians, counts, scatter)
     spans = _spans(res, hour, inside & judged, sign, start)
     departs = any(s.end_ms > anchor_ms - EARLY_MS for s in spans)
+    later = (mine.epoch_ms >= anchor_ms) & (mine.epoch_ms < end) & judged
+    flicker = _flicker(res, mine.epoch_ms, in_base & judged, later)
     return SensorRow(
         name,
         int(base_res.size),
@@ -220,7 +251,35 @@ def _sensor_row(name: str, mine: Series, anchor_ms: int) -> SensorRow:
         spans,
         departs,
         sign,
+        flicker,
     )
+
+
+def _flicker(
+    res: FloatArray,
+    times: IntArray,
+    before: npt.NDArray[np.bool_],
+    after: npt.NDArray[np.bool_],
+) -> float | None:
+    """The median spread within an hour after the time over that in the baseline.
+
+    Each residual has its SEPA's baseline taken off, so what is left within an
+    hour is flicker: steady in a stabilised satellite, raised in one that has
+    started to rotate or tumble (Hall 2011; Benson et al. 2020).
+    """
+    spreads = []
+    for chosen in (before, after):
+        hour = times[chosen] // HOUR_MS
+        values = res[chosen]
+        each = [
+            1.4826 * float(np.median(np.abs(v - np.median(v))))
+            for h in np.unique(hour)
+            if (v := values[hour == h]).size >= FLICKER_HOUR_MIN
+        ]
+        if len(each) < FLICKER_HOURS_MIN:
+            return None
+        spreads.append(float(np.median(each)))
+    return spreads[1] / max(spreads[0], SCATTER_FLOOR_MAG / 2)
 
 
 def _hour_signs(medians: FloatArray, counts: IntArray, scatter: float | None) -> IntArray:
@@ -401,13 +460,15 @@ def board(given: Inputs, *, anchor_ms: int, data_end_ms: int) -> Board:
     steps, typical, baseline = elset_steps(given.elsets, given.source, anchor_ms)
     passes = passes_in_strip(given.approaches, anchor_ms, given.threshold_km + SGP4_UNCERTAINTY_KM)
     has_elsets = bool(given.elsets)
+    manoeuvre = _manoeuvre(steps, typical, baseline, given.source, anchor_ms, has_elsets=has_elsets)
     cards = (
-        _manoeuvre(steps, typical, baseline, given.source, anchor_ms, has_elsets=has_elsets),
+        manoeuvre,
         _neighbour(
             passes, given.threshold_km, given.names, anchor_ms, given.approaches_note, has_elsets
         ),
         _season(given.flag, rows),
         _sensor(rows, anchor_ms),
+        _attitude(rows, manoeuvre, anchor_ms),
     )
     return Board(
         anchor_ms,
@@ -622,7 +683,7 @@ def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
     aside = "".join(
         f" {r.name} also turns {'fainter' if s.median_mag > 0 else 'brighter'} "
         f"{'earlier' if s.start_ms < found.span.start_ms else 'later'}, from "
-        f"{when(s.start_ms)}; that is not judged here."
+        f"{when(s.start_ms)}; that is weighed under Attitude."
         for r, s in found.separate
     )
     if found.conflicting:
@@ -715,6 +776,232 @@ def _agreement(rows: Sequence[SensorRow], anchor_ms: int) -> Agreement | None:
     return found
 
 
+def _attitude(rows: Sequence[SensorRow], manoeuvre: Card, anchor_ms: int) -> Card:
+    """Attitude (1.5): the light curve signatures of an attitude or configuration change.
+
+    From the research brief (proposal 04): a feature that recurs at the same
+    geometry on another night (Hall 2011), a level step held in 2 or more
+    sensors (Skuljan 2021), the onset of flicker (Hall 2011; Benson et al.
+    2020), or a departure alongside a manoeuvre, since burns are bracketed by
+    reorientations (Singh et al. 2020). The evidence must come from more than
+    one sensor: a lone sensor's departure is the Sensor card's artefact. It
+    never says what the satellite does or points at.
+    """
+    title = "Attitude"
+    caveat = _glint_season(anchor_ms)
+    tail = " Photometry cannot say why, or what the satellite points at."
+    judged = _judged(rows)
+    if not judged:
+        return Card(
+            "attitude",
+            "cannot",
+            title,
+            "No sensor could be compared with its own previous 7 days around your time.",
+        )
+    flicker = _flicker_text(judged)
+    found = _agreement(rows, anchor_ms)
+    if found is None:
+        quiet = (
+            f"None of the {len(judged)} sensors compared leaves its normal range around your time"
+        )
+        return (
+            Card("attitude", "fits", title, f"{quiet}, but{flicker}{caveat}{tail}")
+            if flicker
+            else Card(
+                "attitude",
+                "against",
+                title,
+                f"{quiet}: no sign of an attitude change in the photometry.{caveat}",
+            )
+        )
+    way = "fainter" if found.span.median_mag > 0 else "brighter"
+    said = (
+        f"The {way} departure of {found.span.median_mag:+.2f} mag from {when(found.span.start_ms)}"
+    )
+    if found.conflicting:
+        return Card(
+            "attitude",
+            "cannot",
+            title,
+            f"{said} is not shared: other sensors went the other way in those hours.",
+        )
+    if len(found.agreeing) == 1 and found.level:
+        return Card(
+            "attitude",
+            "against",
+            title,
+            f"{said} is in {found.agreeing[0].name} alone while others observing those hours "
+            "stay level: one sensor's artefact, not the satellite.",
+        )
+    again = _recurs(rows, found, anchor_ms)
+    stepped = [
+        r.name
+        for r in judged
+        if r.shift_mag is not None and r.limit_mag is not None and abs(r.shift_mag) >= r.limit_mag
+    ]
+    evidence = (
+        (
+            bool(again),
+            f"{said} recurs at the same geometry {again}: a new feature at the same solar phase "
+            "angle, as a lasting attitude or configuration change gives (a new glint, or an "
+            f"array or antenna re-pointed).{flicker}{caveat}{tail}",
+        ),
+        (
+            len(stepped) >= MIN_SENSORS,
+            f"{joined(stepped)} sit beyond their normal range on median for the whole time after "
+            f"your time: a level step, as a solar array offset change gives.{flicker}{caveat}"
+            f"{tail}",
+        ),
+        (bool(flicker), f"{said}.{flicker}{caveat}{tail}"),
+        (
+            manoeuvre.state == "fits",
+            f"{said} sits alongside the manoeuvre. Burns are usually bracketed by attitude "
+            "changes, a reorientation to fire and back, which give such a feature; photometry "
+            f"cannot separate the two, the elsets can.{caveat}",
+        ),
+    )
+    for shown, text in evidence:
+        if shown:
+            return Card("attitude", "fits", title, text)
+    return Card(
+        "attitude",
+        "cannot",
+        title,
+        f"{said} neither recurs at the same geometry nor holds as a step: an attitude change, "
+        f"a glint or weather can each give this. The following nights will tell.{caveat}",
+    )
+
+
+def _flicker_text(judged: Sequence[SensorRow]) -> str:
+    """A sentence when 2 or more sensors flicker more than in their baseline, else ""."""
+    flickering = [
+        r for r in judged if r.flicker_ratio is not None and r.flicker_ratio >= FLICKER_RATIO
+    ]
+    if len(flickering) < MIN_SENSORS:
+        return ""
+    least = min(r.flicker_ratio or 0.0 for r in flickering)
+    return (
+        f" {joined([r.name for r in flickering])} flicker within each hour at {least:.1f} "
+        "times or more their usual spread, as a rotation or tumble gives."
+    )
+
+
+def _recurs(rows: Sequence[SensorRow], found: Agreement, anchor_ms: int) -> str:
+    """Where the reference departure comes back at the same geometry, in words; "" if not."""
+    start, _ = strip(anchor_ms)
+    sign = 1 if found.span.median_mag > 0 else -1
+    first = (found.span.start_ms - start) // HOUR_MS
+    last = (found.span.end_ms - start) // HOUR_MS
+    seen: dict[int, list[str]] = {}
+    for days in RECUR_DAYS:
+        lo = max(0, first + 24 * days - RECUR_SLACK_HOURS)
+        hi = min(HOURS, last + 24 * days + RECUR_SLACK_HOURS)
+        names = [
+            r.name
+            for r in rows
+            if r.scatter_mag is not None
+            # Outside the departure itself: a long step does not recur, it holds.
+            and any(r.hour_sign[h] == sign for h in range(lo, hi) if not first <= h < last)
+        ]
+        if lo < hi and names:
+            seen[days] = names
+    sensors = sorted({name for names in seen.values() for name in names})
+    # A repeat in one sensor alone is that sensor, not the satellite.
+    if len(sensors) < MIN_SENSORS:
+        return ""
+    words = {
+        -2: "two nights before",
+        -1: "the night before",
+        1: "the next night",
+        2: "two nights later",
+    }
+    nights = joined([words[d] for d in sorted(seen)])
+    return f"{nights}, in {joined(sensors)}"
+
+
+def _glint_season(anchor_ms: int) -> str:
+    """A caveat when the time falls in an equinox glint season, else ""."""
+    moment = datetime.fromtimestamp(anchor_ms / 1000, UTC).date()
+    gap = min(
+        abs((moment - date(year, month, day)).days)
+        for year in (moment.year - 1, moment.year, moment.year + 1)
+        for month, day in EQUINOXES
+    )
+    if gap > EQUINOX_DAYS:
+        return ""
+    return (
+        f" Your time is {gap} days from an equinox, in the glint season, so a seasonal glint "
+        "cannot be ruled out: check the same season in earlier years."
+    )
+
+
+@dataclass(frozen=True)
+class Mark:
+    """A departure the panel boxes: a sensor's span, or one hour confirming another's."""
+
+    name: str
+    start_ms: int
+    end_ms: int
+    median_mag: float
+    confirms: bool = False
+
+
+def marks(rows: Sequence[SensorRow], anchor_ms: int) -> list[Mark]:
+    """Every departure to box on the panel, as the cards weigh them."""
+    start, _ = strip(anchor_ms)
+    found = _agreement(rows, anchor_ms)
+    out = [Mark(r.name, s.start_ms, s.end_ms, s.median_mag) for r in rows for s in r.spans]
+    if found is None:
+        return out
+    sign = 1 if found.span.median_mag > 0 else -1
+    first = (found.span.start_ms - start) // HOUR_MS
+    last = (found.span.end_ms - start) // HOUR_MS
+    for row in found.agreeing:
+        ref = found.span
+        if any(s.start_ms < ref.end_ms and s.end_ms > ref.start_ms for s in row.spans):
+            continue
+        out.extend(
+            Mark(
+                row.name,
+                start + h * HOUR_MS,
+                start + (h + 1) * HOUR_MS,
+                float(row.hour_median[h]),
+                confirms=True,
+            )
+            for h in range(first, last)
+            if row.hour_sign[h] == sign
+        )
+    return out
+
+
+def panel_rows(rows: Sequence[SensorRow]) -> list[SensorRow]:
+    """The sensors the panel draws: those with a baseline and at least one judged hour."""
+    return [r for r in rows if r.scatter_mag is not None and np.isfinite(r.hour_median).any()]
+
+
+def summary(rows: Sequence[SensorRow], anchor_ms: int) -> str:
+    """One plain sentence for the sensor panel: who was compared, and who left their range."""
+    compared = panel_rows(rows)
+    silent = [r.name for r in rows if r not in compared]
+    found = _agreement(rows, anchor_ms)
+    moved = [r.name for r in found.agreeing + found.conflicting] if found else []
+    noun = "sensor" if len(compared) == 1 else "sensors"
+    text = f"Compared: {len(compared)} {noun} with a baseline. "
+    if moved:
+        text += (
+            f"{joined(moved)} left {'its' if len(moved) == 1 else 'their'} normal range "
+            "around your time. "
+        )
+    elif compared:
+        text += "None left its normal range around your time. "
+    if silent:
+        listed = ", ".join(silent[:4]) + (", and others" if len(silent) > 4 else "")
+        text += (
+            f"{len(silent)} more observed but had no previous 7 days to compare with ({listed})."
+        )
+    return text.strip()
+
+
 def _judged(rows: Sequence[SensorRow]) -> list[SensorRow]:
     """Sensors with enough comparisons both sides of the time to judge."""
     return [r for r in rows if r.scatter_mag is not None and r.after >= SIDE_MIN]
@@ -737,8 +1024,10 @@ def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) 
         )
         if found.conflicting:
             bright += f", and {len(found.conflicting)} the other way"
+    elif len(judged) == 1:
+        bright = "The 1 sensor compared stays within its normal range"
     else:
-        bright = f"None of {len(judged)} sensors departs from its own previous 7 days"
+        bright = f"None of the {len(judged)} sensors compared leaves its normal range"
     fitting = [c.title for c in cards if c.state == "fits"]
     if fitting:
         return f"{bright}. Fits the timing: {joined(fitting)}."

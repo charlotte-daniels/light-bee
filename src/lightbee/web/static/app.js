@@ -305,12 +305,16 @@ async function drawCauses() {
 async function drawBoard() {
   $('board-headline').textContent = 'Drawing the triage board.';
   $('board-lead').textContent = '';
+  $('board-summary').textContent = '';
+  .textContent = '';
   $('board-cards').replaceChildren();
   $('board').hidden = false;
   try {
     const board = await api(runPath('/board'));
     $('board-headline').textContent = board.headline;
     $('board-lead').textContent = board.lead;
+    $('board-summary').textContent = board.summary || '';
+    .textContent = board.summary || '';
     const cards = $('board-cards');
     cards.replaceChildren(...board.cards.map(boardCard));
     await draw('plot-board', board.figure);

@@ -228,7 +228,7 @@ def test_the_season_card_cannot_judge_when_the_flag_cannot() -> None:
     assert "Drifting: cannot compare" in season.body
     steady = made(photometry())
     assert card(steady, "season").state == "fits"
-    assert steady.headline.startswith("None of 3 sensors departs")
+    assert steady.headline.startswith("None of the 3 sensors compared leaves its normal range")
 
 
 def test_too_little_data_after_the_time_is_said_and_judged_honestly() -> None:
@@ -286,9 +286,17 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
         names={67226: "TJS-23"},
     )
     figure = board_figure(result, caption, {67226: "TJS-23"})
-    kinds = [t["type"] for t in figure["data"]]
-    assert kinds[0] == "heatmap"
-    assert figure["data"][0]["y"] == list(SENSORS)
+    # The compact panel: one row per sensor, each labelled with its normal range.
+    assert all(t["type"] == "scatter" for t in figure["data"])
+    ticks = figure["layout"]["yaxis"]["ticktext"]
+    assert [t.split()[0] for t in ticks] == list(SENSORS)
+    assert all(chr(0xB1) in t for t in ticks)  # each row says its normal range
+    fainter = next(t for t in figure["data"] if t.get("name") == "fainter")
+    assert fainter["marker"]["color"] == "#f39c12"
+    boxes = [s for s in figure["layout"]["shapes"] if s.get("yref") == "y" and s["line"]["width"]]
+    assert len(boxes) == 3  # each sensor's 1 to 4 hour departure
+    notes = [a["text"] for a in figure["layout"]["annotations"]]
+    assert sum(1 for t in notes if t.startswith(("<b>+0.2", "<b>+0.3"))) == 3
     labels = [t for t in figure["data"] if t.get("mode") == "text"]
     assert len(labels) == 1
     assert labels[0]["y"] == [1.35]  # above the bar at 1
@@ -312,7 +320,7 @@ def test_a_strip_with_no_sensor_says_so() -> None:
     figure = board_figure(made(), caption, {})
     assert all(t["type"] != "heatmap" for t in figure["data"])
     texts = [a["text"] for a in figure["layout"]["annotations"]]
-    assert "No sensor saw the object in these 72 hours." in texts
+    assert "No sensor could be compared with its own previous 7 days." in texts
 
 
 def test_the_season_card_cannot_judge_when_no_sensor_can_be_compared() -> None:
@@ -479,3 +487,93 @@ def test_a_busy_strip_labels_only_the_passes_nearest_the_time() -> None:
     assert len(passes["hovertext"]) == 8  # every pass still says what it is on hover
     nearest = sorted(range(8), key=lambda k: abs((k - 3) * 6))[:LABELLED_PASSES]
     assert sorted(labelled) == sorted(nearest)
+
+
+def test_attitude_fits_a_departure_that_recurs_at_the_same_geometry() -> None:
+    """Case 2's shape: brighter for 3 hours, and again at the same hours the next night."""
+    events = dict.fromkeys(SENSORS, (1.0, 4.0, -0.5))
+    series = photometry(events)
+    again = (series.epoch_ms >= A + 25 * HOUR_MS) & (series.epoch_ms < A + 28 * HOUR_MS)
+    series = Series(
+        series.epoch_ms,
+        np.where(again, series.mag - 0.5, series.mag),
+        series.sepa,
+        series.geolon,
+        series.sensor,
+        series.sensors,
+        series.basis,
+    )
+    result = made(series)
+    attitude = card(result, "attitude")
+    assert attitude.state == "fits"
+    assert "recurs at the same geometry the next night" in attitude.body
+    assert "Photometry cannot say why" in attitude.body
+    assert "Attitude" in result.headline
+
+
+def test_attitude_fits_a_level_step_held_in_several_sensors() -> None:
+    attitude = card(made(photometry(dict.fromkeys(SENSORS, (0.0, 48.0, 0.5)))), "attitude")
+    assert attitude.state == "fits"
+    assert "a level step" in attitude.body
+    assert "recurs" not in attitude.body  # a held step is not a repeat
+
+
+def test_attitude_fits_a_departure_alongside_a_manoeuvre() -> None:
+    result = made(photometry(dict.fromkeys(SENSORS, (1.0, 4.0, -0.5))), elsets(step_at_hours=3.0))
+    attitude = card(result, "attitude")
+    assert card(result, "manoeuvre").state == "fits"
+    assert attitude.state == "fits"
+    assert "alongside the manoeuvre" in attitude.body
+
+
+def test_attitude_does_not_fit_one_sensors_artefact() -> None:
+    attitude = card(made(photometry({"EXO1834": (0.0, 48.0, 0.4)})), "attitude")
+    assert attitude.state == "against"
+    assert "EXO1834 alone" in attitude.body
+
+
+def test_attitude_does_not_fit_a_steady_object_and_cannot_judge_without_sensors() -> None:
+    assert card(made(photometry()), "attitude").state == "against"
+    assert card(made(), "attitude").state == "cannot"
+
+
+def test_flicker_onset_in_several_sensors_reads_as_rotation() -> None:
+    """Spread within each hour rises fivefold after the time, with no change in level."""
+    series = photometry()
+    rng = np.random.default_rng(9)
+    after = series.epoch_ms >= A
+    noisy = series.mag + np.where(after, rng.normal(0.0, 0.2, series.mag.size), 0.0)
+    series = Series(
+        series.epoch_ms,
+        noisy,
+        series.sepa,
+        series.geolon,
+        series.sensor,
+        series.sensors,
+        series.basis,
+    )
+    rows = sensor_rows(series, A)
+    assert all(r.flicker_ratio is not None and r.flicker_ratio > 2.0 for r in rows)
+    steady = sensor_rows(photometry(), A)
+    assert all(r.flicker_ratio is not None and r.flicker_ratio < 1.5 for r in steady)
+    attitude = card(made(series), "attitude")
+    assert attitude.state == "fits"
+    assert "as a rotation or tumble gives" in attitude.body
+
+
+def test_the_equinox_glint_season_is_named_only_near_an_equinox() -> None:
+    from lightbee.analysis.triage import _glint_season
+
+    near = int(datetime(2026, 10, 5, 12, tzinfo=UTC).timestamp() * 1000)
+    assert "13 days from an equinox" in _glint_season(near)
+    assert _glint_season(A) == ""  # 19 November is 58 days on
+
+
+def test_the_panel_summary_names_who_was_compared_and_who_moved() -> None:
+    from lightbee.analysis.triage import marks, summary
+
+    rows = sensor_rows(photometry({"EXO1612": (1.0, 3.0, -3.0), "EXO1834": (2.0, 3.0, -3.0)}), A)
+    text = summary(rows, A)
+    assert text.startswith("Compared: 3 sensors with a baseline.")
+    assert "left their normal range around your time" in text
+    assert any(m.name == "EXO1834" for m in marks(rows, A))

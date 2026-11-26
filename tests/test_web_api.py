@@ -1018,10 +1018,17 @@ def test_a_run_with_a_change_time_has_a_triage_board(fake: FakeUdl) -> None:
         response = test_client.get(f"/api/runs/{run['id']}/board")
         assert response.status_code == 200, response.text
         board = response.json()
-        assert [c["key"] for c in board["cards"]] == ["manoeuvre", "neighbour", "season", "sensor"]
+        assert [c["key"] for c in board["cards"]] == [
+            "manoeuvre",
+            "neighbour",
+            "season",
+            "sensor",
+            "attitude",
+        ]
         assert all(c["state"] in {"fits", "against", "cannot"} for c in board["cards"])
         assert board["headline"]
         assert board["lead"].startswith("72 hours from 9 Nov 06:00Z")
+        assert board["summary"].startswith("Compared: ")
         figure = board["figure"]
         texts = [a["text"] for a in figure["layout"]["annotations"]]
         assert "Triage around your change time" in texts

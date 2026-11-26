@@ -1,19 +1,32 @@
 """The triage board's strip: 72 hours around the analyst's change time.
 
-Each sensor's row shows, hour by hour, how far it sits from its own previous
-7 days at the same SEPA (fainter is warmer). Below, the elset period steps and every
-pass within reach. The change time is the amber line. The verdict cards are
-drawn by the page, not here; the figure carries the headline, so the PNG still
-says what the board found.
+The sensor panel (1.5) has one row per sensor that could be compared: a band
+for that sensor's own normal range, a dot for each hour (grey inside the band,
+blue brighter or orange fainter beyond it), and a box round each departure.
+Up is brighter. Below, the elset period steps and every pass within reach. The
+change time is the amber line. The verdict cards are drawn by the page, not
+here; the figure carries the headline, so the PNG still says what the board
+found.
 """
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Final
 
-from lightbee.analysis.triage import HOUR_MS, HOURS, Board, name_of, when
+from lightbee.analysis.triage import (
+    HOUR_MIN,
+    HOUR_MS,
+    HOURS,
+    Board,
+    SensorRow,
+    marks,
+    name_of,
+    panel_rows,
+    when,
+)
 from lightbee.figures.common import (
     AMBER,
     MUTED,
@@ -23,67 +36,40 @@ from lightbee.figures.common import (
     escape,
     layout,
     panel_title,
-    rounded,
 )
 
-# Brighter than the baseline is blue, fainter is orange; both ends read on
-# black. No change is a mid grey (3.4:1 on black), so an hour with nothing to
-# compare, left black, is a gap and never reads as a zero.
-DEPARTURE_SCALE: Final = [[0.0, "#3a7bd5"], [0.5, "#5c6675"], [1.0, "#f39c12"]]
-DEPARTURE_RANGE_MAG: Final = 0.5
+BRIGHTER: Final = "#4a8fe7"  # 5.6:1 on black
+FAINTER: Final = "#f39c12"  # 9.6:1 on black
+WITHIN: Final = "#8a9bb3"
+BAND: Final = "rgba(115,155,207,0.30)"
+# The normal range fills the middle of a row: a value this many times the
+# range reaches the row's edge, and anything larger is drawn at the edge
+# (its hover gives the real value).
+ROW_SCALE: Final = 2.2
+ROW_HALF: Final = 0.42  # of a row's height, each side of its centre
 # Steps smaller than this many times typical are not marked on the strip.
 MARKED_STEP_TIMES: Final = 5.0
-ROW_PX: Final = 34
-EVENTS_PX: Final = 120
+ROW_PX: Final = 30
+EVENTS_PX: Final = 110
 NEIGHBOUR_MARK: Final = "#ffffff"
 STEP_COLOUR: Final = "#c8d3e0"
 # Passes labelled on the strip, the nearest the time; the rest show on hover.
 LABELLED_PASSES: Final = 4
+PANEL_TITLE: Final = (
+    "Each sensor against its own previous 7 days · shaded: its normal range · "
+    "blue brighter, orange fainter, beyond it · boxed: a departure · up is brighter"
+)
 
 
 def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> dict[str, Any]:
-    rows = board.sensors
-    height_rows = max(len(rows), 1) * ROW_PX
-    plot_px = height_rows + EVENTS_PX + 60
+    rows = panel_rows(board.sensors)
+    plot_px = max(len(rows), 1) * ROW_PX + EVENTS_PX + 60
     split = EVENTS_PX / plot_px
-    hours = [_iso(board.start_ms + h * HOUR_MS + HOUR_MS / 2) for h in range(HOURS)]
-    traces: list[dict[str, Any]] = []
-    if rows:
-        traces.append(
-            {
-                "type": "heatmap",
-                "x": hours,
-                "y": [r.name for r in rows],
-                "z": [rounded(r.hour_median, 3) for r in rows],
-                "customdata": [r.hour_count.tolist() for r in rows],
-                "zmin": -DEPARTURE_RANGE_MAG,
-                "zmax": DEPARTURE_RANGE_MAG,
-                "zmid": 0.0,
-                "colorscale": DEPARTURE_SCALE,
-                "xgap": 1,
-                "ygap": 2,
-                "hoverongaps": False,
-                "hovertemplate": (
-                    "%{y}<br>%{x|%d %b %H}:00Z hour<br>%{z:+.2f} mag against its previous 7 days"
-                    "<br>%{customdata} observations<extra></extra>"
-                ),
-                "colorbar": {
-                    "title": {
-                        "text": "mag v. previous 7 days<br>(fainter +; black: no data)",
-                        "side": "right",
-                    },
-                    "tickfont": {"color": MUTED},
-                    "len": 1 - split,
-                    "y": 1.0,
-                    "yanchor": "top",
-                },
-                "xaxis": "x",
-                "yaxis": "y",
-            }
-        )
+    traces, shapes, notes = _panel(board, rows)
     traces.extend(_steps(board))
     traces.extend(_passes(board, names))
     anchor = _iso(board.anchor_ms)
+    count = max(len(rows), 1)
     extra = {
         "showlegend": False,
         "xaxis": axis(
@@ -97,9 +83,11 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
         "yaxis": axis(
             "",
             domain=[split + 0.04, 1.0],
-            autorange="reversed",
-            type="category",
+            range=[count - 0.5, -0.5],  # the first row at the top
+            tickvals=list(range(len(rows))),
+            ticktext=[f"{escape(r.name)}  ±{r.limit_mag or 0.0:.2f}" for r in rows],
             showgrid=False,
+            zeroline=False,
         ),
         "yaxis2": axis(
             "",
@@ -121,7 +109,8 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
     figure_layout["dragmode"] = False
     figure_layout["shapes"] = [
         *figure_layout["shapes"],
-        # A dark casing under the amber line keeps it visible over orange cells.
+        *shapes,
+        # A dark casing under the amber line keeps it visible over orange dots.
         *(
             {
                 "type": "line",
@@ -138,7 +127,8 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
     ]
     figure_layout["annotations"] = [
         *figure_layout["annotations"],
-        panel_title("Each sensor against its own previous 7 days, hour by hour", "x", 1.0),
+        *notes,
+        panel_title(PANEL_TITLE, "x", 1.0),
         {
             "text": f"your change time, {escape(when(board.anchor_ms))}",
             "xref": "x",
@@ -157,7 +147,7 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
     if not rows:
         figure_layout["annotations"].append(
             {
-                "text": "No sensor saw the object in these 72 hours.",
+                "text": "No sensor could be compared with its own previous 7 days.",
                 "xref": "paper",
                 "yref": "paper",
                 "x": 0.5,
@@ -169,6 +159,119 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
     verdicts = " ".join(f"{c.title}: {c.body}" for c in board.cards)
     summary = f"Triage strip. {board.headline} {verdicts}"
     return {"data": traces, "layout": figure_layout, "summary": summary}
+
+
+def _panel(
+    board: Board, rows: list[SensorRow]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """The sensor rows: the dots, the bands and boxes, and the departure labels."""
+    groups: dict[str, dict[str, list[Any]]] = {
+        key: {"x": [], "y": [], "text": []} for key in ("within", "brighter", "fainter")
+    }
+    shapes: list[dict[str, Any]] = []
+    band = ROW_HALF / ROW_SCALE  # the normal range, as a share of a row
+    for i, row in enumerate(rows):
+        shapes.append(_rect(board.start_ms, board.end_ms, i - band, i + band, fill=BAND))
+        _dots(board, i, row, groups)
+    boxes, notes = _boxes(board, rows)
+    style = {
+        "within": (WITHIN, 6),
+        "brighter": (BRIGHTER, 10),
+        "fainter": (FAINTER, 10),
+    }
+    traces = [
+        {
+            "type": "scatter",
+            "mode": "markers",
+            "x": group["x"],
+            "y": group["y"],
+            "hovertext": group["text"],
+            "hovertemplate": "%{hovertext}<extra></extra>",
+            "marker": {"color": style[key][0], "size": style[key][1]},
+            "name": key,
+            "xaxis": "x",
+            "yaxis": "y",
+        }
+        for key, group in groups.items()
+        if group["x"]
+    ]
+    return traces, shapes + boxes, notes
+
+
+def _dots(board: Board, i: int, row: SensorRow, groups: dict[str, dict[str, list[Any]]]) -> None:
+    """One dot per judged hour of one sensor, in its row, sorted by whether it departs."""
+    limit = row.limit_mag or 0.0
+    reach = ROW_SCALE * limit
+    for h in range(HOURS):
+        value, count = float(row.hour_median[h]), int(row.hour_count[h])
+        if count < HOUR_MIN or math.isnan(value):  # an hour too thin to judge, or none
+            continue
+        key = "within" if abs(value) < limit else ("brighter" if value < 0 else "fainter")
+        drawn = max(-reach, min(reach, value)) / reach * ROW_HALF
+        centre = board.start_ms + h * HOUR_MS + HOUR_MS / 2
+        groups[key]["x"].append(_iso(centre))
+        groups[key]["y"].append(round(i + drawn, 4))
+        groups[key]["text"].append(
+            f"{escape(row.name)}<br>{escape(when(centre - HOUR_MS / 2))} hour: "
+            f"{value:+.2f} mag against its previous 7 days<br>{count} observations; "
+            f"normal range ±{limit:.2f}"
+        )
+
+
+def _boxes(
+    board: Board, rows: list[SensorRow]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A box round each departure, and its size beside it."""
+    where = {r.name: i for i, r in enumerate(rows)}
+    shapes: list[dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
+    for mark in marks(rows, board.anchor_ms):
+        if mark.name not in where:
+            continue
+        i = where[mark.name]
+        colour = BRIGHTER if mark.median_mag < 0 else FAINTER
+        shapes.append(
+            _rect(mark.start_ms, mark.end_ms, i - ROW_HALF - 0.04, i + ROW_HALF + 0.04, line=colour)
+        )
+        label = f"{mark.median_mag:+.2f} mag{', confirms' if mark.confirms else ''}"
+        notes.append(
+            {
+                "text": f"<b>{escape(label)}</b>",
+                "xref": "x",
+                "yref": "y",
+                "x": _iso(mark.end_ms),
+                "y": i,
+                "xanchor": "left",
+                "xshift": 4,
+                "showarrow": False,
+                "bgcolor": "#000000",
+                "font": {"color": colour, "size": 12},
+            }
+        )
+    return shapes, notes
+
+
+def _rect(
+    start_ms: float,
+    end_ms: float,
+    low: float,
+    high: float,
+    *,
+    fill: str = "rgba(0,0,0,0)",
+    line: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": "rect",
+        "xref": "x",
+        "yref": "y",
+        "x0": _iso(start_ms),
+        "x1": _iso(end_ms),
+        "y0": low,
+        "y1": high,
+        "fillcolor": fill,
+        "line": {"width": 1.5, "color": line} if line else {"width": 0},
+        "layer": "below" if line is None else "above",
+    }
 
 
 def _steps(board: Board) -> list[dict[str, Any]]:

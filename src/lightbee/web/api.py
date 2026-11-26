@@ -39,6 +39,7 @@ from lightbee.analysis.screen import (
     scan,
 )
 from lightbee.analysis.series import Series
+from lightbee.analysis.triage import summary
 from lightbee.figures.board import board_figure
 from lightbee.figures.causes import CausesInputs, causes_figure
 from lightbee.figures.common import Caption, rounded
@@ -368,6 +369,7 @@ def triage_board(run_id: str, session: Current, request: Request) -> dict[str, A
     return {
         "headline": found.headline,
         "lead": found.lead,
+        "summary": summary(found.sensors, found.anchor_ms),
         "cards": [
             {"key": c.key, "state": c.state, "title": c.title, "body": c.body} for c in found.cards
         ],

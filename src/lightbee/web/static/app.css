@@ -136,3 +136,5 @@ dialog::backdrop { background: rgba(5, 10, 20, 0.7); }
 .hyp[data-state="against"] .hyp-state { color: var(--muted); }
 .hyp[data-state="cannot"] { border-left-style: dashed; }
 .hyp[data-state="cannot"] .hyp-state { color: var(--control-edge); }
+/* 1.5: the sensor panel's one-line summary, above the strip. */
+.board-summary { margin: 0 0 0.5rem; }
