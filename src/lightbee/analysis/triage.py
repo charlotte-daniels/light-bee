@@ -83,6 +83,8 @@ FLICKER_HOURS_MIN: Final = 3  # such hours needed on each side
 # so at the same solar phase angle, 1 or 2 days apart (Hall 2011).
 RECUR_DAYS: Final = (-2, -1, 1, 2)
 RECUR_SLACK_HOURS: Final = 1
+# A recurring feature must be seen back at level within this many hours after it ends.
+RECUR_END_HOURS: Final = 12
 # The equinox glint season (Chote et al. 2025; Hall 2011): within this many
 # days of an equinox a recurring feature may be a seasonal glint.
 EQUINOX_DAYS: Final = 30
@@ -102,6 +104,8 @@ LOOSE_ELSET_GAP_MS: Final = 12 * HOUR_MS
 # A step fits the timing when its elsets bracket a moment within this of the time.
 NEAR_STEP_MS: Final = 12 * HOUR_MS
 NEAR_PASS_MS: Final = 6 * HOUR_MS
+# Passes labelled on the strip, the nearest the time (the figure uses the same number).
+PASSES_LABELLED: Final = 4
 # A neighbour passing this many times in the 72 hours passes routinely.
 ROUTINE_PASSES: Final = 3
 CANNOT_JUDGE_OUTCOMES: Final = frozenset({"drifting", "relocated", "inconclusive"})
@@ -494,6 +498,8 @@ def when(ms: float) -> str:
 def apart(ms: float, anchor_ms: int) -> str:
     hours = abs(ms - anchor_ms) / HOUR_MS
     side = "before" if ms < anchor_ms else "after"
+    if hours < 1:  # minutes read more naturally than a fraction of an hour
+        return f"{round(hours * 60)} minutes {side} your time"
     return f"{hours:.1f} hours {side} your time"
 
 
@@ -612,7 +618,12 @@ def _neighbour(
             f" It passes {near.passes_in_strip} times in these 72 hours, so a pass near "
             "your time is not unusual on its own."
         )
-    listed = f" Every pass is listed: {len(real)} in all.{alongside}"
+    # The strip labels only the passes nearest the time; the rest show on hover.
+    labelled = min(len(real), PASSES_LABELLED)
+    listed = (
+        f" {len(real)} {'pass' if len(real) == 1 else 'passes'} in all; the {labelled} nearest "
+        f"your time {'is' if labelled == 1 else 'are'} labelled on the strip.{alongside}"
+    )
     if abs(near.tca_ms - anchor_ms) > NEAR_PASS_MS:
         return Card("neighbour", "against", title, f"Nearest in time: {said}{listed}")
     if near.range_km > threshold_km:
@@ -841,20 +852,20 @@ def _attitude(rows: Sequence[SensorRow], manoeuvre: Card, anchor_ms: int) -> Car
     ]
     evidence = (
         (
+            len(stepped) >= MIN_SENSORS,
+            f"{joined(stepped)}: their medians stay beyond their normal ranges from your time "
+            "to the end of the strip, a level step, the kind a solar array offset change gives."
+            f"{flicker}{caveat}{tail}",
+        ),
+        (
             bool(again),
             f"{said} recurs at the same geometry {again}: a new feature at the same solar phase "
             "angle, as a lasting attitude or configuration change gives (a new glint, or an "
             f"array or antenna re-pointed).{flicker}{caveat}{tail}",
         ),
-        (
-            len(stepped) >= MIN_SENSORS,
-            f"{joined(stepped)} sit beyond their normal range on median for the whole time after "
-            f"your time: a level step, as a solar array offset change gives.{flicker}{caveat}"
-            f"{tail}",
-        ),
         (bool(flicker), f"{said}.{flicker}{caveat}{tail}"),
         (
-            manoeuvre.state == "fits",
+            manoeuvre.state == "fits" and len(found.agreeing) >= MIN_SENSORS,
             f"{said} sits alongside the manoeuvre. Burns are usually bracketed by attitude "
             "changes, a reorientation to fire and back, which give such a feature; photometry "
             f"cannot separate the two, the elsets can.{caveat}",
@@ -892,6 +903,16 @@ def _recurs(rows: Sequence[SensorRow], found: Agreement, anchor_ms: int) -> str:
     sign = 1 if found.span.median_mag > 0 else -1
     first = (found.span.start_ms - start) // HOUR_MS
     last = (found.span.end_ms - start) // HOUR_MS
+    # A feature, not a step: a sensor that departed must be seen back at level
+    # later that night. A lasting step, observed night by night, never is, and
+    # would otherwise "recur" every night (engineering review of 1.5).
+    ended = any(
+        r.hour_count[h] >= HOUR_MIN and r.hour_sign[h] == 0
+        for r in found.agreeing
+        for h in range(last, min(HOURS, last + RECUR_END_HOURS))
+    )
+    if not ended:
+        return ""
     seen: dict[int, list[str]] = {}
     for days in RECUR_DAYS:
         lo = max(0, first + 24 * days - RECUR_SLACK_HOURS)
@@ -1016,11 +1037,12 @@ def _headline(rows: Sequence[SensorRow], cards: Sequence[Card], anchor_ms: int) 
         agree = len(found.agreeing)
         seen = agree + len(found.conflicting) + len(found.level)
         way = "fainter" if found.span.median_mag > 0 else "brighter"
+        # The time first, so "watching" has something to refer to (design review of 1.5).
         bright = (
-            f"{agree} of {seen} {'sensor' if seen == 1 else 'sensors'} observing those hours "
+            f"From {when(found.span.start_ms)}, {agree} of the {seen} "
+            f"{'sensor' if seen == 1 else 'sensors'} watching "
             f"{'turns' if agree == 1 else 'turn'} {way} against "
-            f"{'its' if agree == 1 else 'their'} own previous 7 days, "
-            f"from {when(found.span.start_ms)}"
+            f"{'its' if agree == 1 else 'their'} own previous 7 days"
         )
         if found.conflicting:
             bright += f", and {len(found.conflicting)} the other way"

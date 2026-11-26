@@ -156,8 +156,8 @@ def test_a_three_hour_fade_in_every_sensor_is_dated_to_the_hour() -> None:
         assert span.median_mag == pytest.approx(0.3, abs=0.06)
     result = made(photometry(fade))
     assert result.headline.startswith(
-        "3 of 3 sensors observing those hours turn fainter against their own previous "
-        "7 days, from 19 Nov 05:30Z"
+        "From 19 Nov 05:30Z, 3 of the 3 sensors watching turn fainter against their own "
+        "previous 7 days"
     )
     assert card(result, "sensor").state == "against"  # all three together: not one sensor
     assert card(result, "season").state == "against"  # hours, not seasons
@@ -293,7 +293,11 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
     assert all(chr(0xB1) in t for t in ticks)  # each row says its normal range
     fainter = next(t for t in figure["data"] if t.get("name") == "fainter")
     assert fainter["marker"]["color"] == "#f39c12"
-    boxes = [s for s in figure["layout"]["shapes"] if s.get("yref") == "y" and s["line"]["width"]]
+    boxes = [
+        s
+        for s in figure["layout"]["shapes"]
+        if s["type"] == "rect" and s.get("yref") == "y" and s["line"]["width"]
+    ]
     assert len(boxes) == 3  # each sensor's 1 to 4 hour departure
     notes = [a["text"] for a in figure["layout"]["annotations"]]
     assert sum(1 for t in notes if t.startswith(("<b>+0.2", "<b>+0.3"))) == 3
@@ -308,7 +312,7 @@ def test_the_strip_carries_its_markings_every_pass_and_each_step_label_above_its
     assert texts.count("UNCLASSIFIED") == 2
     assert "your change time, 19 Nov 04:30Z" in texts
     assert figure["summary"].startswith(
-        "Triage strip. 3 of 3 sensors observing those hours turn fainter"
+        "Triage strip. From 19 Nov 05:30Z, 3 of the 3 sensors watching turn fainter"
     )
 
 
@@ -412,7 +416,7 @@ def test_one_hour_in_a_second_sensor_confirms_anothers_departure() -> None:
     sensor = card(result, "sensor")
     assert sensor.state == "against"
     assert "EXO1612 and EXO1834 depart the same way (brighter) in the same hours" in sensor.body
-    assert result.headline.startswith("2 of 2 sensors observing those hours turn brighter")
+    assert ", 2 of the 2 sensors watching turn brighter" in result.headline
 
 
 def test_a_lone_departure_no_other_sensor_observed_cannot_be_judged() -> None:
@@ -577,3 +581,73 @@ def test_the_panel_summary_names_who_was_compared_and_who_moved() -> None:
     assert text.startswith("Compared: 3 sensors with a baseline.")
     assert "left their normal range around your time" in text
     assert any(m.name == "EXO1834" for m in marks(rows, A))
+
+
+def night_only(series: Series) -> Series:
+    """Keep 20:00 to 06:00 UTC: real sensors see the object by night only."""
+    hour = (series.epoch_ms // HOUR_MS) % 24
+    return series.take((hour >= 20) | (hour < 6))
+
+
+def shifted(series: Series, lo_hours: float, hi_hours: float, by: float) -> Series:
+    """The series with every sensor `by` mag fainter between two times from the anchor."""
+    t = series.epoch_ms
+    inside = (t >= A + lo_hours * HOUR_MS) & (t < A + hi_hours * HOUR_MS)
+    return Series(
+        series.epoch_ms,
+        np.where(inside, series.mag + by, series.mag),
+        series.sepa,
+        series.geolon,
+        series.sensor,
+        series.sensors,
+        series.basis,
+    )
+
+
+def test_a_lasting_step_seen_night_by_night_reads_as_a_step_not_a_repeat() -> None:
+    """Engineering review of 1.5: night-only observing splits a step into one span a night."""
+    series = shifted(night_only(photometry()), 16.0, 48.0, 0.4)
+    attitude = card(made(series), "attitude")
+    assert attitude.state == "fits"
+    assert "a level step" in attitude.body
+    assert "recurs" not in attitude.body
+
+
+def test_a_feature_back_at_the_same_hours_the_next_night_reads_as_a_repeat() -> None:
+    series = shifted(shifted(night_only(photometry()), 16.0, 18.0, -0.5), 40.0, 42.0, -0.5)
+    attitude = card(made(series), "attitude")
+    assert attitude.state == "fits"
+    assert "recurs at the same geometry" in attitude.body
+
+
+def test_a_lone_sensor_alongside_a_manoeuvre_is_not_called_an_attitude_change() -> None:
+    """Engineering review of 1.5: every attitude signature needs 2 or more sensors."""
+    series = photometry({"EXO1612": (1.0, 4.0, -0.6)})
+    t = series.epoch_ms
+    alone = series.take((series.sensor == 0) | (t < A) | (t >= A + 6 * HOUR_MS))
+    result = made(alone, elsets(step_at_hours=3.0))
+    assert card(result, "manoeuvre").state == "fits"
+    assert card(result, "attitude").state != "fits"
+
+
+def test_the_strip_reads_out_its_departures_and_draws_band_edges() -> None:
+    from lightbee.figures.board import EDGE, board_figure
+    from lightbee.figures.common import Caption
+
+    caption = Caption("UNCLASSIFIED", 43874, "test window", "test source", ANCHOR)
+    figure = board_figure(made(photometry(dict.fromkeys(SENSORS, (1.0, 4.0, 0.3)))), caption, {})
+    said = figure["summary"]
+    assert "Compared: 3 sensors with a baseline." in said
+    assert "Departures: EXO1612 +0." in said
+    assert "0 elset steps marked; 0 passes within reach." in said
+    shapes = figure["layout"]["shapes"]
+    edges = [s for s in shapes if s.get("type") == "line" and s["line"]["color"] == EDGE]
+    assert len(edges) == 6  # top and bottom of each of 3 bands
+    assert all(t.endswith(" mag") for t in figure["layout"]["yaxis"]["ticktext"])
+
+
+def test_a_gap_under_an_hour_reads_in_minutes() -> None:
+    from lightbee.analysis.triage import apart
+
+    assert apart(A + 24 * 60_000, A) == "24 minutes after your time"
+    assert apart(A - 90 * 60_000, A) == "1.5 hours before your time"

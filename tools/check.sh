@@ -16,6 +16,16 @@ echo "== tool tests";  .venv/bin/pytest -q tools/tests --no-cov -o pythonpath="s
 if command -v node >/dev/null; then
   echo "== js tests";  node --test tools/js_tests/*.test.mjs | grep -E "^# (pass|fail)"
                        node --test tools/js_tests/*.test.mjs >/dev/null
+  # Every page script must parse as the module the browser loads it as: the
+  # tests import only logic.mjs, and a broken app.js shipped unseen in 1.5.
+  echo "== js syntax"
+  parsed="$(mktemp -d)"
+  for script in src/lightbee/web/static/*.js src/lightbee/web/static/*.mjs; do
+    cp "$script" "$parsed/$(basename "${script%.*}").mjs"
+    node --check "$parsed/$(basename "${script%.*}").mjs"
+  done
+  rm -rf "$parsed"
+  echo "page scripts parse"
 else
   echo "SKIP  js tests (node not installed)"
 fi

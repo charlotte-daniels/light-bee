@@ -20,11 +20,13 @@ from lightbee.analysis.triage import (
     HOUR_MIN,
     HOUR_MS,
     HOURS,
+    PASSES_LABELLED,
     Board,
     SensorRow,
     marks,
     name_of,
     panel_rows,
+    summary,
     when,
 )
 from lightbee.figures.common import (
@@ -54,11 +56,12 @@ EVENTS_PX: Final = 110
 NEIGHBOUR_MARK: Final = "#ffffff"
 STEP_COLOUR: Final = "#c8d3e0"
 # Passes labelled on the strip, the nearest the time; the rest show on hover.
-LABELLED_PASSES: Final = 4
+LABELLED_PASSES: Final = PASSES_LABELLED
 PANEL_TITLE: Final = (
-    "Each sensor against its own previous 7 days · shaded: its normal range · "
-    "blue brighter, orange fainter, beyond it · boxed: a departure · up is brighter"
+    "Each sensor against its own previous 7 days: shaded, its normal range; grey, within it; "
+    "blue brighter or orange fainter, beyond it; boxed, a departure; up is brighter"
 )
+EDGE: Final = "#739bcf"  # the band's edges, 7.4:1 on black, so the range reads at a glance
 
 
 def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> dict[str, Any]:
@@ -85,7 +88,7 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
             domain=[split + 0.04, 1.0],
             range=[count - 0.5, -0.5],  # the first row at the top
             tickvals=list(range(len(rows))),
-            ticktext=[f"{escape(r.name)}  ±{r.limit_mag or 0.0:.2f}" for r in rows],
+            ticktext=[f"{escape(r.name)}  ±{r.limit_mag or 0.0:.2f} mag" for r in rows],
             showgrid=False,
             zeroline=False,
         ),
@@ -156,9 +159,26 @@ def board_figure(board: Board, caption: Caption, names: Mapping[int, str]) -> di
                 "font": {"color": MUTED, "size": 14},
             }
         )
-    verdicts = " ".join(f"{c.title}: {c.body}" for c in board.cards)
-    summary = f"Triage strip. {board.headline} {verdicts}"
+    summary = _described(board, rows)
     return {"data": traces, "layout": figure_layout, "summary": summary}
+
+
+def _described(board: Board, rows: list[SensorRow]) -> str:
+    """The figure's text for a screen reader: what the panel shows, not the cards again."""
+    shown = [
+        f"{m.name} {m.median_mag:+.2f} mag from {when(m.start_ms)}"
+        + (", confirming" if m.confirms else "")
+        for m in marks(rows, board.anchor_ms)
+    ]
+    steps = sum(1 for s in board.steps if (s.times_typical or 0.0) >= MARKED_STEP_TIMES)
+    parts = [
+        f"Triage strip. {board.headline}",
+        summary(board.sensors, board.anchor_ms),
+        f"Departures: {'; '.join(shown)}." if shown else "No departures.",
+        f"{steps} elset {'step' if steps == 1 else 'steps'} marked; "
+        f"{len(board.passes)} {'pass' if len(board.passes) == 1 else 'passes'} within reach.",
+    ]
+    return " ".join(parts)
 
 
 def _panel(
@@ -172,6 +192,7 @@ def _panel(
     band = ROW_HALF / ROW_SCALE  # the normal range, as a share of a row
     for i, row in enumerate(rows):
         shapes.append(_rect(board.start_ms, board.end_ms, i - band, i + band, fill=BAND))
+        shapes.extend(_edge(board, i + side * band) for side in (-1, 1))
         _dots(board, i, row, groups)
     boxes, notes = _boxes(board, rows)
     style = {
@@ -231,7 +252,7 @@ def _boxes(
         i = where[mark.name]
         colour = BRIGHTER if mark.median_mag < 0 else FAINTER
         shapes.append(
-            _rect(mark.start_ms, mark.end_ms, i - ROW_HALF - 0.04, i + ROW_HALF + 0.04, line=colour)
+            _rect(mark.start_ms, mark.end_ms, i - ROW_HALF - 0.02, i + ROW_HALF + 0.02, line=colour)
         )
         label = f"{mark.median_mag:+.2f} mag{', confirms' if mark.confirms else ''}"
         notes.append(
@@ -249,6 +270,20 @@ def _boxes(
             }
         )
     return shapes, notes
+
+
+def _edge(board: Board, y: float) -> dict[str, Any]:
+    return {
+        "type": "line",
+        "xref": "x",
+        "yref": "y",
+        "x0": _iso(board.start_ms),
+        "x1": _iso(board.end_ms),
+        "y0": y,
+        "y1": y,
+        "line": {"color": EDGE, "width": 1},
+        "layer": "below",
+    }
 
 
 def _rect(

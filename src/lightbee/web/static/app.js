@@ -306,7 +306,6 @@ async function drawBoard() {
   $('board-headline').textContent = 'Drawing the triage board.';
   $('board-lead').textContent = '';
   $('board-summary').textContent = '';
-  .textContent = '';
   $('board-cards').replaceChildren();
   $('board').hidden = false;
   try {
@@ -314,7 +313,6 @@ async function drawBoard() {
     $('board-headline').textContent = board.headline;
     $('board-lead').textContent = board.lead;
     $('board-summary').textContent = board.summary || '';
-    .textContent = board.summary || '';
     const cards = $('board-cards');
     cards.replaceChildren(...board.cards.map(boardCard));
     await draw('plot-board', board.figure);

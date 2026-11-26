@@ -125,7 +125,7 @@ dialog::backdrop { background: rgba(5, 10, 20, 0.7); }
 .kicker { color: var(--amber); font-size: 0.85rem; letter-spacing: 0.05em; text-transform: uppercase; margin: 0; }
 .board-headline { margin: 0.2rem 0 0.35rem; font-size: 1.2rem; }
 .board-lead { margin: 0 0 0.75rem; color: var(--muted); }
-.hyps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: 0.75rem; margin-bottom: 0.75rem; }
+.hyps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(12rem, 100%), 1fr)); gap: 0.75rem; margin-bottom: 0.75rem; }
 .hyp { border: 1px solid var(--line); border-left: 6px solid var(--control-edge); background: var(--navy); padding: 0.6rem 0.8rem; }
 .hyp h3 { margin: 0.1rem 0 0.3rem; font-size: 1.05rem; }
 .hyp p { margin: 0 0 0.4rem; font-size: 0.92rem; }
@@ -138,3 +138,13 @@ dialog::backdrop { background: rgba(5, 10, 20, 0.7); }
 .hyp[data-state="cannot"] .hyp-state { color: var(--control-edge); }
 /* 1.5: the sensor panel's one-line summary, above the strip. */
 .board-summary { margin: 0 0 0.5rem; }
+/* 1.5: the key under the strip, with the panel's own colours as swatches. */
+.board-key { color: var(--muted); font-size: 0.85rem; margin: 0.4rem 0 0; }
+.key-band, .key-dot, .key-box { display: inline-block; vertical-align: middle; margin: 0 0.3rem 0 0.7rem; }
+.key-band { width: 22px; height: 10px; background: rgba(115, 155, 207, 0.3); border-top: 1px solid #739bcf; border-bottom: 1px solid #739bcf; margin-left: 0; }
+.key-dot { width: 9px; height: 9px; border-radius: 50%; }
+.key-dot.within { background: #8a9bb3; }
+.key-dot.brighter { background: #4a8fe7; }
+.key-dot.fainter { background: #f39c12; }
+.key-box { width: 16px; height: 10px; border: 1.5px solid var(--text); }
+.key-time { color: var(--amber); }
