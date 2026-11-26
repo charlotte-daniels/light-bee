@@ -685,3 +685,24 @@ def test_counts_and_gaps_read_naturally() -> None:
     assert apart(A + 60_000, A) == "1 minute after your time"
     assert apart(A + 10_000, A) == "under a minute after your time"
     assert apart(A + 59 * 60_000 + 50_000, A) == "1.0 hours after your time"
+
+
+def test_an_hour_too_thin_to_judge_is_left_off_the_panel() -> None:
+    """An hour with 1 or 2 observations has a median, but too few to judge."""
+    from lightbee.figures.board import board_figure
+    from lightbee.figures.common import Caption
+
+    series = photometry()
+    t = series.epoch_ms
+    sparse_start = A + 10 * HOUR_MS
+    in_hour = (t >= sparse_start) & (t < sparse_start + HOUR_MS)
+    first_two = in_hour & (np.cumsum(in_hour) <= 2)
+    thin = series.take(~in_hour | first_two)
+    result = made(thin)
+    row = next(r for r in result.sensors if r.hour_count[34] > 0)
+    assert 0 < row.hour_count[34] < 3  # the strip starts 24 hours before the time
+    caption = Caption("UNCLASSIFIED", 43874, "test window", "test source", ANCHOR)
+    figure = board_figure(result, caption, {})
+    hour_text = "19 Nov 14:30Z hour"
+    dots = [h for tr in figure["data"] if tr.get("yaxis") == "y" for h in tr.get("hovertext", [])]
+    assert not any(hour_text in h for h in dots)
