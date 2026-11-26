@@ -716,3 +716,25 @@ def test_the_pass_count_reads_naturally_for_few_and_many() -> None:
     many = [approach(40100 + k, [(A + (k - 3) * 6 * HOUR_MS, 100.0 + k)]) for k in range(8)]
     eight = card(made(found_elsets=elsets(), found=many), "neighbour")
     assert "8 passes in all; the 4 nearest your time are labelled on the strip." in eight.body
+
+
+def test_the_strip_labels_the_real_passes_the_card_counts_not_a_held_neighbour() -> None:
+    """Engineering review of 1.5: 4 real passes and one held neighbour near the time."""
+    from lightbee.figures.board import board_figure
+    from lightbee.figures.common import Caption
+
+    start, end = strip(A)
+    track = np.arange(start - 3 * 86_400_000, end, 300_000, dtype=np.int64)
+    km = np.full(track.size, 100.0)
+    km[track == A] = 99.0  # the held neighbour's closest moment: right at the time
+    held = Approach(40001, int(track[0]), 99.0, True, False, track, km, ((int(track[0]), 99.0),))
+    real = [approach(40100 + k, [(A + (k + 3) * 6 * HOUR_MS, 120.0)]) for k in range(4)]
+    result = made(found_elsets=elsets(), found=[held, *real])
+    assert "4 passes, all labelled on the strip." in card(result, "neighbour").body
+    caption = Caption("UNCLASSIFIED", 43874, "test window", "test source", ANCHOR)
+    (passes,) = [
+        t for t in board_figure(result, caption, {})["data"] if t.get("mode") == "markers+text"
+    ]
+    labelled = [text for text in passes["text"] if text]
+    assert len(labelled) == 4
+    assert not any("40001" in text for text in labelled)

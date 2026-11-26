@@ -370,9 +370,12 @@ def _passes(board: Board, names: Mapping[int, str]) -> list[dict[str, Any]]:
     labels = [escape(f"{name_of(p.sat_no, names)} {p.range_km:,.0f} km") for p in board.passes]
     # Only the passes nearest the time are labelled, so a busy strip stays
     # legible (case 4 had 16); every pass keeps its marker and its hover label.
-    nearest = sorted(
-        range(len(board.passes)), key=lambda i: abs(board.passes[i].tca_ms - board.anchor_ms)
-    )[:LABELLED_PASSES]
+    # Labels go to the real passes nearest the time, as the Neighbour card counts
+    # them; a neighbour within reach throughout keeps its marker and hover label.
+    real = [i for i, p in enumerate(board.passes) if not p.held]
+    nearest = sorted(real, key=lambda i: abs(board.passes[i].tca_ms - board.anchor_ms))[
+        :LABELLED_PASSES
+    ]
     shown = sorted(nearest)
     return [
         {
