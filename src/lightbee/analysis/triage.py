@@ -631,11 +631,14 @@ def _neighbour(
             "your time is not unusual on its own."
         )
     # The strip labels only the passes nearest the time; the rest show on hover.
-    labelled = min(len(real), PASSES_LABELLED)
-    listed = (
-        f" {len(real)} {'pass' if len(real) == 1 else 'passes'} in all; the {labelled} nearest "
-        f"your time {'is' if labelled == 1 else 'are'} labelled on the strip.{alongside}"
-    )
+    if len(real) <= PASSES_LABELLED:  # every pass is labelled on the strip
+        count = "1 pass in all, labelled" if len(real) == 1 else f"{len(real)} passes, all labelled"
+        listed = f" {count} on the strip.{alongside}"
+    else:
+        listed = (
+            f" {len(real)} passes in all; the {PASSES_LABELLED} nearest your time are labelled "
+            f"on the strip.{alongside}"
+        )
     if abs(near.tca_ms - anchor_ms) > NEAR_PASS_MS:
         return Card("neighbour", "against", title, f"Nearest in time: {said}{listed}")
     if near.range_km > threshold_km:
@@ -698,7 +701,7 @@ def _sensor(rows: Sequence[SensorRow], anchor_ms: int) -> Card:
             "sensor",
             "cannot",
             title,
-            f"None of {len(judged)} sensors departs from its own previous 7 days, "
+            f"None of the {len(judged)} sensors compared leaves its normal range, "
             "so there is no change to put down to a sensor.",
         )
     hours = f"{when(found.span.start_ms)} to {when(found.span.end_ms)}"

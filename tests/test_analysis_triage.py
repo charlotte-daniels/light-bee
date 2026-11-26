@@ -706,3 +706,13 @@ def test_an_hour_too_thin_to_judge_is_left_off_the_panel() -> None:
     hour_text = "19 Nov 14:30Z hour"
     dots = [h for tr in figure["data"] if tr.get("yaxis") == "y" for h in tr.get("hovertext", [])]
     assert not any(hour_text in h for h in dots)
+
+
+def test_the_pass_count_reads_naturally_for_few_and_many() -> None:
+    one = card(
+        made(found_elsets=elsets(), found=[approach(45985, [(A + HOUR_MS, 100.0)])]), "neighbour"
+    )
+    assert "1 pass in all, labelled on the strip." in one.body
+    many = [approach(40100 + k, [(A + (k - 3) * 6 * HOUR_MS, 100.0 + k)]) for k in range(8)]
+    eight = card(made(found_elsets=elsets(), found=many), "neighbour")
+    assert "8 passes in all; the 4 nearest your time are labelled on the strip." in eight.body
