@@ -738,3 +738,16 @@ def test_the_strip_labels_the_real_passes_the_card_counts_not_a_held_neighbour()
     labelled = [text for text in passes["text"] if text]
     assert len(labelled) == 4
     assert not any("40001" in text for text in labelled)
+
+
+def test_a_brighter_hour_beyond_the_range_is_drawn_blue() -> None:
+    from lightbee.figures.board import BRIGHTER, board_figure
+    from lightbee.figures.common import Caption
+
+    caption = Caption("UNCLASSIFIED", 43874, "test window", "test source", ANCHOR)
+    result = made(photometry(dict.fromkeys(SENSORS, (1.0, 4.0, -0.5))))
+    figure = board_figure(result, caption, {})
+    brighter = next(t for t in figure["data"] if t.get("name") == "brighter")
+    assert brighter["marker"]["color"] == BRIGHTER
+    assert len(brighter["x"]) >= 3 * 3  # 3 hours in each of 3 sensors
+    assert not any(t.get("name") == "fainter" for t in figure["data"])
